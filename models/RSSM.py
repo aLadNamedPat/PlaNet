@@ -95,7 +95,18 @@ class RSSM(nn.Module):
         return self.encoder(obs)
 
     def decode(self, hidden_state, posterior_state_est):
-        return self.decoder(torch.cat([hidden_state, posterior_state_est], dim=-1))
+        # Debug decoder input shapes (only first few times)
+        if not hasattr(self, '_decode_debug_count'):
+            self._decode_debug_count = 0
+
+        if self._decode_debug_count < 3:
+            print(f"        DECODE DEBUG - Hidden: {hidden_state.shape}, Posterior: {posterior_state_est.shape}")
+            combined = torch.cat([hidden_state, posterior_state_est], dim=-1)
+            print(f"        DECODE DEBUG - Combined input: {combined.shape}")
+            self._decode_debug_count += 1
+
+        combined_input = torch.cat([hidden_state, posterior_state_est], dim=-1)
+        return self.decoder(combined_input)
     
     def pass_through(self, prev_stochastic_state, prev_hidden, encoded_obs, actions):
         # We need to have the previous stochastic state because we need to use it to generate the next hidden state

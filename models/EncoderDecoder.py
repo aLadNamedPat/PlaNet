@@ -55,11 +55,12 @@ class Encoder(nn.Module):
         return out
 
 class Decoder(nn.Module):
-    def __init__(self, latent_dim=1024, hidden_dim=200, base_channels=32, output_channels=3, dropout_prob=0.2):
+    def __init__(self, latent_dim=30, hidden_dim=200, base_channels=32, output_channels=3, dropout_prob=0.2):
         super(Decoder, self).__init__()
 
         self.base_channels = base_channels
-        # Input is latent_dim + hidden_dim, output to 4x4 feature maps
+        # Input is latent_dim (stochastic state) + hidden_dim (deterministic state)
+        # latent_dim=30 (posterior/prior state), hidden_dim=200 (GRU hidden state)
         self.fc = nn.Linear(latent_dim + hidden_dim, base_channels * 8 * 4 * 4)
 
         self.deconv1 = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, kernel_size=4, stride=2, padding=1)
