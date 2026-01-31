@@ -7,13 +7,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class Encoder(nn.Module):
-    def __init__(self, input_channels=3, base_channels=32, latent_dim=128, dropout_prob=0.2):
+    def __init__(self, input_channels=3, base_channels=32, latent_dim=1024, dropout_prob=0.2):
         super(Encoder, self).__init__()
+
+        self.base_channels = base_channels
 
         self.conv1 = nn.Conv2d(input_channels, base_channels, kernel_size=4, stride=2, padding=1)
         self.bn1 = nn.BatchNorm2d(base_channels)
         self.dropout1 = nn.Dropout2d(dropout_prob)
-        
+
         self.conv2 = nn.Conv2d(base_channels, base_channels * 2, kernel_size=4, stride=2, padding=1)
         self.bn2 = nn.BatchNorm2d(base_channels * 2)
         self.dropout2 = nn.Dropout2d(dropout_prob)
@@ -26,8 +28,12 @@ class Encoder(nn.Module):
         self.bn4 = nn.BatchNorm2d(base_channels * 8)
         self.dropout4 = nn.Dropout2d(dropout_prob)
 
-        self.fc_mu = nn.Linear(base_channels * 8, latent_dim)
-        self.fc_logvar = nn.Linear(base_channels * 8, latent_dim)
+        # For 64x64 input: 64->32->16->8->4, so final size is 4x4
+        # With base_channels=32, final features = (32*8) * 4 * 4 = 4096
+        final_conv_size = base_channels * 8 * 4 * 4  # 256 * 16 = 4096
+
+        self.fc_mu = nn.Linear(final_conv_size, latent_dim)
+        self.fc_logvar = nn.Linear(final_conv_size, latent_dim)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -49,10 +55,11 @@ class Encoder(nn.Module):
         return out
 
 class Decoder(nn.Module):
-    def __init__(self, latent_dim=128, hidden_dim = 128, base_channels=32, output_channels=3, dropout_prob=0.2):
+    def __init__(self, latent_dim=1024, hidden_dim=200, base_channels=32, output_channels=3, dropout_prob=0.2):
         super(Decoder, self).__init__()
 
         self.base_channels = base_channels
+        # Input is latent_dim + hidden_dim, output to 4x4 feature maps
         self.fc = nn.Linear(latent_dim + hidden_dim, base_channels * 8 * 4 * 4)
 
         self.deconv1 = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, kernel_size=4, stride=2, padding=1)

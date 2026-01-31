@@ -761,6 +761,10 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         encoded_dim = encoded_obs.shape[-1]
         encoded_obs = encoded_obs.view(batch_size, seq_len, encoded_dim)
 
+        # Debug encoded dimensions on first epoch
+        if epoch == 0:
+            print(f"   Encoded observation shape: [batch_size, seq_len, encoded_dim] = {encoded_obs.shape}")
+
         # Initialize states
         prev_state = torch.zeros(batch_size, latent_size)
         prev_hidden = torch.zeros(batch_size, hidden_size)
