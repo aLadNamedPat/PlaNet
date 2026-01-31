@@ -67,58 +67,53 @@ def check_rendering_libraries():
 
     print("=" * 50)
 
+def setup_virtual_display():
+    """Setup virtual display for GCP headless rendering"""
+    import subprocess
+    import time
+
+    print("Setting up virtual display for GCP...")
+
+    try:
+        # Start Xvfb virtual display
+        print("Starting Xvfb virtual display...")
+        subprocess.Popen([
+            'Xvfb', ':99', '-screen', '0', '1024x768x24'
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Wait for Xvfb to start
+        time.sleep(2)
+
+        # Set DISPLAY environment variable
+        os.environ['DISPLAY'] = ':99'
+        print("Virtual display started on :99")
+        return True
+
+    except FileNotFoundError:
+        print("Xvfb not found - trying without virtual display")
+        return False
+    except Exception as e:
+        print(f"Failed to start Xvfb: {e}")
+        return False
+
+
 def create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0):
-    """Create DMC environment with CPU-based rendering"""
+    """Create DMC environment with GCP-compatible rendering"""
 
     check_rendering_libraries()
 
-    print("Setting up CPU-based rendering for MuJoCo...")
+    print("=== Setting up GCP-compatible rendering ===")
 
-    # Clear problematic environment variables
-    env_vars_to_clear = ['DISPLAY', 'XAUTHORITY']
-    for var in env_vars_to_clear:
-        if var in os.environ:
-            print(f"Clearing {var}={os.environ[var]}")
-            del os.environ[var]
-
-    # Try CPU rendering first
-    os.environ['MUJOCO_GL'] = 'disable'
-    print("Attempting CPU rendering with MUJOCO_GL=disable")
-
-    try:
-        # Import after setting environment variables
-        from dm_control import suite
-
-        # Create base environment
-        print("Loading suite environment...")
-        env = suite.load(domain_name=domain_name, task_name=task_name)
-
-        # Try to render manually using CPU
-        print("Testing CPU rendering...")
-
-        # Reset environment first
-        time_step = env.reset()
-
-        # Try to render using the physics engine directly
+    # Method 1: Try virtual display first
+    if setup_virtual_display():
         try:
-            pixels = env.physics.render(height=height, width=width, camera_id=camera_id)
-            print(f"Successfully rendered with CPU backend, shape: {pixels.shape}")
+            print("Attempting rendering with virtual display...")
+            os.environ['MUJOCO_GL'] = 'glfw'
 
-            # Now create the custom wrapper that uses CPU rendering
-            env_cpu = CPURenderWrapper(env, height=height, width=width, camera_id=camera_id)
-            return env_cpu
-
-        except Exception as render_error:
-            print(f"CPU rendering failed: {render_error}")
-            print("Trying software Mesa fallback...")
-
-            # Try software Mesa as last resort
-            os.environ['MUJOCO_GL'] = 'osmesa'
-            os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
-            os.environ['MESA_GL_VERSION_OVERRIDE'] = '3.3'
-
+            from dm_control import suite
             from dm_control.suite.wrappers import pixels
 
+            env = suite.load(domain_name=domain_name, task_name=task_name)
             env = pixels.Wrapper(
                 env,
                 pixels_only=True,
@@ -128,17 +123,75 @@ def create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width
             # Test rendering
             time_step = env.reset()
             pixels_obs = time_step.observation['pixels']
-            print(f"Mesa software rendering successful, shape: {pixels_obs.shape}")
-
+            print(f"✓ Virtual display rendering successful! Shape: {pixels_obs.shape}")
             return env
 
+        except Exception as e:
+            print(f"Virtual display rendering failed: {e}")
+
+    # Method 2: Try software Mesa
+    print("Trying software Mesa rendering...")
+    try:
+        # Clear DISPLAY and force software rendering
+        if 'DISPLAY' in os.environ:
+            del os.environ['DISPLAY']
+
+        os.environ['MUJOCO_GL'] = 'osmesa'
+        os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
+        os.environ['MESA_GL_VERSION_OVERRIDE'] = '3.3'
+        os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
+
+        from dm_control import suite
+        from dm_control.suite.wrappers import pixels
+
+        env = suite.load(domain_name=domain_name, task_name=task_name)
+        env = pixels.Wrapper(
+            env,
+            pixels_only=True,
+            render_kwargs={'height': height, 'width': width, 'camera_id': camera_id}
+        )
+
+        time_step = env.reset()
+        pixels_obs = time_step.observation['pixels']
+        print(f"✓ Software Mesa rendering successful! Shape: {pixels_obs.shape}")
+        return env
+
     except Exception as e:
-        print(f"All rendering methods failed. Error: {e}")
-        print(f"Error type: {type(e)}")
-        import traceback
-        print("Full traceback:")
-        traceback.print_exc()
-        raise e
+        print(f"Software Mesa failed: {e}")
+
+    # Method 3: Try EGL
+    print("Trying EGL rendering...")
+    try:
+        os.environ['MUJOCO_GL'] = 'egl'
+        os.environ['PYOPENGL_PLATFORM'] = 'egl'
+
+        from dm_control import suite
+        from dm_control.suite.wrappers import pixels
+
+        env = suite.load(domain_name=domain_name, task_name=task_name)
+        env = pixels.Wrapper(
+            env,
+            pixels_only=True,
+            render_kwargs={'height': height, 'width': width, 'camera_id': camera_id}
+        )
+
+        time_step = env.reset()
+        pixels_obs = time_step.observation['pixels']
+        print(f"✓ EGL rendering successful! Shape: {pixels_obs.shape}")
+        return env
+
+    except Exception as e:
+        print(f"EGL failed: {e}")
+
+    # If all methods fail, provide instructions
+    print("\n" + "="*60)
+    print("ALL RENDERING METHODS FAILED")
+    print("For GCP, you need to install rendering libraries:")
+    print("sudo apt update")
+    print("sudo apt install -y libosmesa6-dev mesa-utils xvfb")
+    print("="*60)
+
+    raise RuntimeError("Could not initialize DMC environment with any rendering backend on GCP")
 
 
 class CPURenderWrapper:
