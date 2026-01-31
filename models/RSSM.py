@@ -23,7 +23,9 @@ class RSSM(nn.Module):
         # input should be composed of the previous hidden state, the previous state, and the previous action
         # since the action is going to be one-hot encoded, we can assume that we are going to embed the
         # action and the previous state together using some learned function. we'll call this the sa_dim
-        self.rnn = nn.GRU(sa_dim + hidden_size, hidden_size, lstm_layers, dropout = 0.1)
+        # Only use dropout if num_layers > 1
+        dropout_rate = 0.1 if lstm_layers > 1 else 0.0
+        self.rnn = nn.GRU(sa_dim + hidden_size, hidden_size, lstm_layers, dropout=dropout_rate)
 
         self.state_action = nn.Sequential(
             nn.Linear(latent_size + action_size, 200),

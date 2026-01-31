@@ -389,7 +389,8 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
 
         obs, info = env.reset()
         # Convert image from (H, W, C) to (C, H, W) and normalize to [0, 1]
-        obs_tensor = torch.tensor(obs, dtype=torch.float32).permute(2, 0, 1) / 255.0
+        # Use .copy() to ensure contiguous array for PyTorch
+        obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
         obs_sequence.append(obs_tensor)
 
         for step in range(max_steps_per_episode):
@@ -400,7 +401,8 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
 
             obs, reward, terminated, truncated, info = env.step(action)
             # Convert image from (H, W, C) to (C, H, W) and normalize to [0, 1]
-            obs_tensor = torch.tensor(obs, dtype=torch.float32).permute(2, 0, 1) / 255.0
+            # Use .copy() to ensure contiguous array for PyTorch
+            obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
             obs_sequence.append(obs_tensor)
             reward_sequence.append(torch.tensor(reward, dtype=torch.float32))
 
@@ -453,7 +455,7 @@ def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
 
     for episode in range(num_episodes):
         obs, info = env.reset()
-        obs_tensor = torch.tensor(obs, dtype=torch.float32)
+        obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32)
 
         controller.reset(obs_tensor)
         episode_return = 0.0
@@ -464,7 +466,7 @@ def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
 
             # Take action in environment
             obs, reward, terminated, truncated, info = env.step(action)
-            obs_tensor = torch.tensor(obs, dtype=torch.float32)
+            obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32)
 
             episode_return += reward
 
@@ -512,7 +514,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
         reward_sequence = []
 
         obs, info = env.reset()
-        obs_tensor = torch.tensor(obs, dtype=torch.float32).permute(2, 0, 1) / 255.0
+        obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
         obs_sequence.append(obs_tensor)
 
         controller.reset(obs_tensor)
@@ -525,7 +527,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
 
             # Take action in environment
             obs, reward, terminated, truncated, info = env.step(action)
-            obs_tensor = torch.tensor(obs, dtype=torch.float32).permute(2, 0, 1) / 255.0
+            obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
             obs_sequence.append(obs_tensor)
             reward_sequence.append(torch.tensor(reward, dtype=torch.float32))
 
