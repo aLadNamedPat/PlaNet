@@ -3,12 +3,65 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import gymnasium as gym
+from dm_control import suite
+from dm_control.suite.wrappers import pixels
 from models.RSSM import RSSM
 from collections import deque
 import random
 from torch.distributions import Normal, kl_divergence
 import wandb
 from cem_planner import PlaNetController
+
+class DMCWrapper:
+    """Wrapper to make DMC environment compatible with Gymnasium interface"""
+    def __init__(self, dmc_env):
+        self.env = dmc_env
+        self.action_spec = dmc_env.action_spec()
+        self.observation_spec = dmc_env.observation_spec()
+
+    @property
+    def action_space(self):
+        """Mock action space for compatibility"""
+        class ActionSpace:
+            def __init__(self, action_spec):
+                self.shape = (len(action_spec.minimum),)
+                self.low = action_spec.minimum
+                self.high = action_spec.maximum
+
+            def sample(self):
+                return np.random.uniform(self.low, self.high)
+
+        return ActionSpace(self.action_spec)
+
+    @property
+    def observation_space(self):
+        """Mock observation space for compatibility"""
+        class ObservationSpace:
+            def __init__(self, obs_spec):
+                if 'pixels' in obs_spec:
+                    self.shape = obs_spec['pixels'].shape
+                else:
+                    # Fallback for other observation types
+                    self.shape = (64, 64, 3)
+
+        return ObservationSpace(self.observation_spec)
+
+    def reset(self):
+        time_step = self.env.reset()
+        obs = time_step.observation['pixels']
+        return obs, {}
+
+    def step(self, action):
+        time_step = self.env.step(action)
+        obs = time_step.observation['pixels']
+        reward = time_step.reward or 0.0
+        terminated = time_step.last()
+        truncated = False  # DMC doesn't distinguish between terminated and truncated
+        info = {}
+        return obs, reward, terminated, truncated, info
+
+    def close(self):
+        self.env.close()
 
 class ExperienceBuffer:
     def __init__(self, max_size=100000):
@@ -251,12 +304,10 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
     L: Sequence length for training chunks
     """
 
-    # Initialize environment with image observations (as per PlaNet paper)
-    env = gym.make("BipedalWalker-v3", render_mode="rgb_array")
-
-    # Wrap to use rendered images as observations (for convolutional networks)
-    from gymnasium.wrappers import AddRenderObservation
-    env = AddRenderObservation(env, render_only=True)
+    # Initialize DMC walker environment with pixel observations (as per PlaNet paper)
+    dmc_env = suite.load(domain_name="walker", task_name="walk")
+    dmc_env = pixels.Wrapper(dmc_env, pixels_only=True, render_kwargs={'height': 64, 'width': 64, 'camera_id': 0})
+    env = DMCWrapper(dmc_env)
 
     # Environment specifications
     obs_shape = env.observation_space.shape 
@@ -273,7 +324,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
     lstm_layers = 1
 
     wandb.init(
-        project="planet-rssm-bipedal",
+        project="planet-rssm-dmc-walker",
         config={
             "S": S,
             "B": B,
@@ -290,7 +341,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             "plan_every": plan_every,
             "planning_episodes": planning_episodes,
             "action_repeat": action_repeat,
-            "environment": "BipedalWalker-v3"
+            "environment": "DMC-walker-walk"
         }
     )
 
@@ -418,7 +469,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             print(f"=== Planning Complete. Dataset now has {len(dataset.observations)} timesteps ===\n")
 
     # Save model and log as wandb artifact
-    model_path = 'trained_rssm_bipedal.pth'
+    model_path = 'trained_rssm_dmc_walker.pth'
     torch.save(rssm.state_dict(), model_path)
 
     # Create wandb artifact for model
@@ -442,14 +493,14 @@ if __name__ == "__main__":
         action_repeat=2  # Action repeat parameter R
     )
 
-    print("Training complete! Model saved as 'trained_rssm_bipedal.pth'")
+    print("Training complete! Model saved as 'trained_rssm_dmc_walker.pth'")
 
     # Final evaluation
     print("\n=== Final Evaluation ===")
-    eval_env = gym.make("BipedalWalker-v3", render_mode="rgb_array")
-    from gymnasium.wrappers import AddRenderObservation
-    eval_env = AddRenderObservation(eval_env, render_only=True)
+    final_dmc_env = suite.load(domain_name="walker", task_name="walk")
+    final_dmc_env = pixels.Wrapper(final_dmc_env, pixels_only=True, render_kwargs={'height': 64, 'width': 64, 'camera_id': 0})
+    final_eval_env = DMCWrapper(final_dmc_env)
 
-    final_avg_return, _ = evaluate_controller(trained_rssm, eval_env, num_episodes=10)
-    eval_env.close()
+    final_avg_return, _ = evaluate_controller(trained_rssm, final_eval_env, num_episodes=10)
+    final_eval_env.close()
     print(f"Final Average Return: {final_avg_return:.2f}")
