@@ -36,38 +36,104 @@ from torch.distributions import Normal, kl_divergence
 import wandb
 from cem_planner import PlaNetController
 
+def check_rendering_libraries():
+    """Check which rendering libraries are available"""
+    print("=== Checking Rendering Libraries ===")
+
+    # Check OSMesa
+    try:
+        import ctypes.util
+        osmesa_lib = ctypes.util.find_library('OSMesa')
+        if osmesa_lib:
+            print(f"✓ OSMesa library found: {osmesa_lib}")
+        else:
+            print("✗ OSMesa library not found")
+    except Exception as e:
+        print(f"✗ Error checking OSMesa: {e}")
+
+    # Check MuJoCo
+    try:
+        import mujoco
+        print(f"✓ MuJoCo version: {mujoco.__version__}")
+    except Exception as e:
+        print(f"✗ Error importing MuJoCo: {e}")
+
+    # Check PyOpenGL
+    try:
+        import OpenGL
+        print(f"✓ PyOpenGL version: {OpenGL.__version__}")
+    except Exception as e:
+        print(f"✗ Error importing PyOpenGL: {e}")
+
+    print("=" * 50)
+
 def create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0):
-    """Safely create DMC environment with rendering fallbacks"""
-    backends = ['egl', 'osmesa', 'glfw']
+    """Create DMC environment with proper headless rendering setup"""
 
-    for backend in backends:
+    check_rendering_libraries()
+
+    print("Setting up environment variables for headless rendering...")
+
+    # Clear any existing OpenGL-related environment variables
+    gl_vars = ['DISPLAY', 'XAUTHORITY', 'LIBGL_ALWAYS_SOFTWARE']
+    for var in gl_vars:
+        if var in os.environ:
+            print(f"Removing {var}={os.environ[var]}")
+            del os.environ[var]
+
+    # Set up OSMesa rendering
+    os.environ['MUJOCO_GL'] = 'osmesa'
+    os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
+    os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
+
+    print("Environment variables set:")
+    print(f"  MUJOCO_GL={os.environ.get('MUJOCO_GL')}")
+    print(f"  PYOPENGL_PLATFORM={os.environ.get('PYOPENGL_PLATFORM')}")
+    print(f"  LIBGL_ALWAYS_SOFTWARE={os.environ.get('LIBGL_ALWAYS_SOFTWARE')}")
+
+    try:
+        print("Creating DMC environment...")
+
+        # Import after setting environment variables
+        from dm_control import suite
+        from dm_control.suite.wrappers import pixels
+
+        # Create base environment
+        print("Loading suite environment...")
+        env = suite.load(domain_name=domain_name, task_name=task_name)
+
+        # Wrap with pixels
+        print("Wrapping with pixels...")
+        env = pixels.Wrapper(
+            env,
+            pixels_only=True,
+            render_kwargs={'height': height, 'width': width, 'camera_id': camera_id}
+        )
+
+        # Test rendering by resetting
+        print("Testing environment reset and rendering...")
+        time_step = env.reset()
+        pixels_obs = time_step.observation['pixels']
+        print(f"Successfully rendered observation with shape: {pixels_obs.shape}")
+
+        return env
+
+    except Exception as e:
+        print(f"Detailed error: {e}")
+        print(f"Error type: {type(e)}")
+        import traceback
+        print("Full traceback:")
+        traceback.print_exc()
+
+        # Additional debugging
+        print("\n=== Additional Debug Info ===")
         try:
-            print(f"Attempting to create DMC environment with {backend} backend...")
-            os.environ['MUJOCO_GL'] = backend
+            import mujoco
+            print(f"MuJoCo available: {mujoco.__version__}")
+        except Exception as me:
+            print(f"MuJoCo error: {me}")
 
-            # Create base environment
-            env = suite.load(domain_name=domain_name, task_name=task_name)
-
-            # Try to wrap with pixels
-            env = pixels.Wrapper(
-                env,
-                pixels_only=True,
-                render_kwargs={'height': height, 'width': width, 'camera_id': camera_id}
-            )
-
-            # Test if rendering works by calling reset
-            time_step = env.reset()
-            _ = time_step.observation['pixels']  # This will fail if rendering doesn't work
-
-            print(f"Successfully created DMC environment with {backend} backend")
-            return env
-
-        except Exception as e:
-            print(f"Backend {backend} failed: {e}")
-            continue
-
-    raise RuntimeError("Could not create DMC environment with any rendering backend. "
-                       "Consider using a different environment or running on a system with graphics support.")
+        raise e
 
 class DMCWrapper:
     """Wrapper to make DMC environment compatible with Gymnasium interface"""
@@ -361,18 +427,11 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
     L: Sequence length for training chunks
     """
 
-    # Initialize DMC walker environment with pixel observations (as per PlaNet paper)
-    try:
-        dmc_env = create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0)
-        env = DMCWrapper(dmc_env)
-    except RuntimeError as e:
-        print(f"DMC environment creation failed: {e}")
-        print("Falling back to BipedalWalker-v3...")
-        # Fallback to original BipedalWalker
-        import gymnasium as gym
-        from gymnasium.wrappers import AddRenderObservation
-        env = gym.make("BipedalWalker-v3", render_mode="rgb_array")
-        env = AddRenderObservation(env, render_only=True)
+    # Initialize DMC walker environment with pixel observations
+    print("Initializing DMC walker environment...")
+    dmc_env = create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0)
+    env = DMCWrapper(dmc_env)
+    environment_name = "DMC-walker-walk"
 
     # Environment specifications
     obs_shape = env.observation_space.shape 
@@ -406,7 +465,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             "plan_every": plan_every,
             "planning_episodes": planning_episodes,
             "action_repeat": action_repeat,
-            "environment": "DMC-walker-walk"
+            "environment": environment_name
         }
     )
 
@@ -560,17 +619,10 @@ if __name__ == "__main__":
 
     print("Training complete! Model saved as 'trained_rssm_dmc_walker.pth'")
 
-    # Final evaluation
+    # Final evaluation using DMC walker
     print("\n=== Final Evaluation ===")
-    try:
-        final_dmc_env = create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0)
-        final_eval_env = DMCWrapper(final_dmc_env)
-    except RuntimeError as e:
-        print(f"DMC environment creation failed for evaluation: {e}")
-        print("Using BipedalWalker-v3 for final evaluation...")
-        final_eval_env = gym.make("BipedalWalker-v3", render_mode="rgb_array")
-        from gymnasium.wrappers import AddRenderObservation
-        final_eval_env = AddRenderObservation(final_eval_env, render_only=True)
+    final_dmc_env = create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0)
+    final_eval_env = DMCWrapper(final_dmc_env)
 
     final_avg_return, _ = evaluate_controller(trained_rssm, final_eval_env, num_episodes=10)
     final_eval_env.close()
