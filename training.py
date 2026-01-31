@@ -5,12 +5,69 @@ import numpy as np
 import gymnasium as gym
 from dm_control import suite
 from dm_control.suite.wrappers import pixels
+import os
+
+def setup_headless_rendering():
+    """Setup headless rendering for DMC environments"""
+    # Try different rendering backends
+    backends = [
+        ('egl', 'egl'),
+        ('osmesa', 'osmesa'),
+        ('glfw', 'glfw')
+    ]
+
+    for mujoco_gl, pyopengl_platform in backends:
+        try:
+            os.environ['MUJOCO_GL'] = mujoco_gl
+            os.environ['PYOPENGL_PLATFORM'] = pyopengl_platform
+            print(f"Trying rendering backend: {mujoco_gl}")
+            return
+        except Exception as e:
+            print(f"Backend {mujoco_gl} failed: {e}")
+            continue
+
+    print("Warning: Could not set up any rendering backend")
+
+setup_headless_rendering()
 from models.RSSM import RSSM
 from collections import deque
 import random
 from torch.distributions import Normal, kl_divergence
 import wandb
 from cem_planner import PlaNetController
+
+def create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0):
+    """Safely create DMC environment with rendering fallbacks"""
+    backends = ['egl', 'osmesa', 'glfw']
+
+    for backend in backends:
+        try:
+            print(f"Attempting to create DMC environment with {backend} backend...")
+            os.environ['MUJOCO_GL'] = backend
+
+            # Create base environment
+            env = suite.load(domain_name=domain_name, task_name=task_name)
+
+            # Try to wrap with pixels
+            env = pixels.Wrapper(
+                env,
+                pixels_only=True,
+                render_kwargs={'height': height, 'width': width, 'camera_id': camera_id}
+            )
+
+            # Test if rendering works by calling reset
+            time_step = env.reset()
+            _ = time_step.observation['pixels']  # This will fail if rendering doesn't work
+
+            print(f"Successfully created DMC environment with {backend} backend")
+            return env
+
+        except Exception as e:
+            print(f"Backend {backend} failed: {e}")
+            continue
+
+    raise RuntimeError("Could not create DMC environment with any rendering backend. "
+                       "Consider using a different environment or running on a system with graphics support.")
 
 class DMCWrapper:
     """Wrapper to make DMC environment compatible with Gymnasium interface"""
@@ -305,9 +362,17 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
     """
 
     # Initialize DMC walker environment with pixel observations (as per PlaNet paper)
-    dmc_env = suite.load(domain_name="walker", task_name="walk")
-    dmc_env = pixels.Wrapper(dmc_env, pixels_only=True, render_kwargs={'height': 64, 'width': 64, 'camera_id': 0})
-    env = DMCWrapper(dmc_env)
+    try:
+        dmc_env = create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0)
+        env = DMCWrapper(dmc_env)
+    except RuntimeError as e:
+        print(f"DMC environment creation failed: {e}")
+        print("Falling back to BipedalWalker-v3...")
+        # Fallback to original BipedalWalker
+        import gymnasium as gym
+        from gymnasium.wrappers import AddRenderObservation
+        env = gym.make("BipedalWalker-v3", render_mode="rgb_array")
+        env = AddRenderObservation(env, render_only=True)
 
     # Environment specifications
     obs_shape = env.observation_space.shape 
@@ -497,9 +562,15 @@ if __name__ == "__main__":
 
     # Final evaluation
     print("\n=== Final Evaluation ===")
-    final_dmc_env = suite.load(domain_name="walker", task_name="walk")
-    final_dmc_env = pixels.Wrapper(final_dmc_env, pixels_only=True, render_kwargs={'height': 64, 'width': 64, 'camera_id': 0})
-    final_eval_env = DMCWrapper(final_dmc_env)
+    try:
+        final_dmc_env = create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0)
+        final_eval_env = DMCWrapper(final_dmc_env)
+    except RuntimeError as e:
+        print(f"DMC environment creation failed for evaluation: {e}")
+        print("Using BipedalWalker-v3 for final evaluation...")
+        final_eval_env = gym.make("BipedalWalker-v3", render_mode="rgb_array")
+        from gymnasium.wrappers import AddRenderObservation
+        final_eval_env = AddRenderObservation(final_eval_env, render_only=True)
 
     final_avg_return, _ = evaluate_controller(trained_rssm, final_eval_env, num_episodes=10)
     final_eval_env.close()
