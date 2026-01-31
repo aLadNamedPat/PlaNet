@@ -212,7 +212,8 @@ class PlaNetController:
         """Reset controller with initial observation"""
         # Encode initial observation
         with torch.no_grad():
-            encoded_obs = self.rssm.encode(initial_obs.unsqueeze(0).unsqueeze(0))
+            # initial_obs shape: [3, 64, 64], need [1, 3, 64, 64] for encoder
+            encoded_obs = self.rssm.encode(initial_obs.unsqueeze(0))
 
             # Initialize state belief and hidden state
             batch_size = 1
@@ -223,8 +224,9 @@ class PlaNetController:
             self.current_hidden = torch.zeros(batch_size, hidden_size)
 
             # Update with first observation using posterior
+            # encoded_obs shape: [1, 1024], squeeze to [1024] then unsqueeze to [1, 1024] for consistency
             self.current_state_belief, _, _ = self.rssm.sample_posterior(
-                self.current_hidden, encoded_obs.squeeze(1), deterministic=True
+                self.current_hidden, encoded_obs, deterministic=True
             )
 
         self.current_action = None
@@ -248,11 +250,13 @@ class PlaNetController:
         # Time to plan a new action
         with torch.no_grad():
             # Encode current observation
-            encoded_obs = self.rssm.encode(obs.unsqueeze(0).unsqueeze(0))
+            # obs shape: [3, 64, 64], need [1, 3, 64, 64] for encoder
+            encoded_obs = self.rssm.encode(obs.unsqueeze(0))
 
             # Update state belief with current observation (posterior)
+            # encoded_obs shape: [1, 1024]
             self.current_state_belief, _, _ = self.rssm.sample_posterior(
-                self.current_hidden, encoded_obs.squeeze(1), deterministic=True
+                self.current_hidden, encoded_obs, deterministic=True
             )
 
             # Plan optimal action
