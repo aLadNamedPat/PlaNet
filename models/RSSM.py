@@ -140,8 +140,24 @@ class RSSM(nn.Module):
 
             # Update hidden state using GRU
             rnn_input = torch.cat([state_action_t, hidden_t], dim=-1).unsqueeze(1)  # Add seq dimension: [B, 1, features]
-            _, hidden_t = self.rnn(rnn_input)  # hidden_t: [num_layers, B, hidden_size]
-            hidden_t = hidden_t.squeeze(0)  # Remove layer dimension: [B, hidden_size]
+            _, hidden_t_new = self.rnn(rnn_input)  # hidden_t_new: [num_layers, B, hidden_size]
+
+            # Properly squeeze to get [B, hidden_size]
+            if hidden_t_new.dim() == 3:  # [num_layers, B, hidden_size]
+                hidden_t = hidden_t_new.squeeze(0)  # Remove layer dimension: [B, hidden_size]
+            else:  # [B, hidden_size] already
+                hidden_t = hidden_t_new
+
+            # Ensure correct batch dimension - if we somehow get [1, hidden_size] instead of [B, hidden_size]
+            if hidden_t.shape[0] != B:
+                hidden_t = hidden_t.expand(B, -1)  # Broadcast to correct batch size
+
+            # Debug shapes during first few iterations
+            if hasattr(self, '_debug_count') and self._debug_count < 3:
+                print(f"        GRU output shape: {hidden_t_new.shape}")
+                print(f"        After processing: {hidden_t.shape}")
+                print(f"        Expected batch size: {B}")
+
             hiddens_list.append(hidden_t)
 
             # Given this new hidden state, let's find the prior and posterior
