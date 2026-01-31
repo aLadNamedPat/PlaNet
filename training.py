@@ -380,25 +380,41 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
     """Collect S random seed episodes for initial dataset"""
     buffer = ExperienceBuffer()
 
-    print(f"Collecting {num_episodes} random episodes...")
+    print(f"\n{'='*60}")
+    print(f"🎯 STARTING RANDOM EPISODE COLLECTION")
+    print(f"Target episodes: {num_episodes}")
+    print(f"Max steps per episode: {max_steps_per_episode}")
+    print(f"{'='*60}")
+
+    total_steps = 0
+    total_reward = 0.0
 
     for episode in range(num_episodes):
+        print(f"\n📺 Episode {episode + 1}/{num_episodes} - Starting...")
+
         obs_sequence = []
         action_sequence = []
         reward_sequence = []
+        episode_reward = 0.0
+        episode_steps = 0
 
+        # Reset environment
+        print(f"  🔄 Resetting environment...")
         obs, info = env.reset()
         # Convert image from (H, W, C) to (C, H, W) and normalize to [0, 1]
         # Use .copy() to ensure contiguous array for PyTorch
         obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
         obs_sequence.append(obs_tensor)
+        print(f"  ✅ Environment reset complete. Observation shape: {obs.shape}")
 
+        # Episode rollout
         for step in range(max_steps_per_episode):
             # Random action sampling
             action = env.action_space.sample()
             action_tensor = torch.tensor(action, dtype=torch.float32)
             action_sequence.append(action_tensor)
 
+            # Take step
             obs, reward, terminated, truncated, info = env.step(action)
             # Convert image from (H, W, C) to (C, H, W) and normalize to [0, 1]
             # Use .copy() to ensure contiguous array for PyTorch
@@ -406,16 +422,46 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
             obs_sequence.append(obs_tensor)
             reward_sequence.append(torch.tensor(reward, dtype=torch.float32))
 
+            episode_reward += reward
+            episode_steps += 1
+
+            # Progress indicator every 100 steps
+            if (step + 1) % 100 == 0:
+                print(f"    Step {step + 1}/{max_steps_per_episode} | Reward: {episode_reward:.2f}")
+
             if terminated or truncated:
+                reason = "terminated" if terminated else "truncated"
+                print(f"  🏁 Episode ended at step {episode_steps} ({reason})")
                 break
 
         # Add episode to buffer (excluding last observation for action alignment)
         buffer.add_episode(obs_sequence[:-1], action_sequence, reward_sequence)
 
-        if (episode + 1) % 10 == 0:
-            print(f"Collected {episode + 1}/{num_episodes} episodes")
+        total_steps += episode_steps
+        total_reward += episode_reward
+        avg_reward = total_reward / (episode + 1)
+        avg_steps = total_steps / (episode + 1)
 
-    print(f"Dataset collection complete. Total timesteps: {len(buffer.observations)}")
+        print(f"  ✅ Episode {episode + 1} complete!")
+        print(f"     Steps: {episode_steps} | Reward: {episode_reward:.3f}")
+        print(f"     Running averages - Steps: {avg_steps:.1f} | Reward: {avg_reward:.3f}")
+
+        # Milestone updates
+        if (episode + 1) % 5 == 0:
+            print(f"\n📊 PROGRESS UPDATE:")
+            print(f"   Episodes completed: {episode + 1}/{num_episodes}")
+            print(f"   Total timesteps collected: {len(buffer.observations)}")
+            print(f"   Average episode length: {avg_steps:.1f} steps")
+            print(f"   Average episode reward: {avg_reward:.3f}")
+
+    print(f"\n{'='*60}")
+    print(f"🎉 RANDOM EPISODE COLLECTION COMPLETE!")
+    print(f"Total episodes: {num_episodes}")
+    print(f"Total timesteps: {len(buffer.observations)}")
+    print(f"Average episode length: {total_steps / num_episodes:.1f} steps")
+    print(f"Average episode reward: {total_reward / num_episodes:.3f}")
+    print(f"{'='*60}")
+
     return buffer
 
 def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards):
@@ -506,21 +552,40 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
 
     buffer = ExperienceBuffer()
 
-    print(f"Collecting {num_episodes} CEM-planned episodes...")
+    print(f"\n{'='*60}")
+    print(f"🤖 STARTING CEM PLANNING EPISODE COLLECTION")
+    print(f"Target episodes: {num_episodes}")
+    print(f"Max steps per episode: {max_steps}")
+    print(f"Action repeat (R): {action_repeat}")
+    print(f"Planning horizon: 12")
+    print(f"{'='*60}")
+
+    total_steps = 0
+    total_reward = 0.0
 
     for episode in range(num_episodes):
+        print(f"\n🎯 CEM Episode {episode + 1}/{num_episodes} - Starting...")
+
         obs_sequence = []
         action_sequence = []
         reward_sequence = []
+        episode_reward = 0.0
+        episode_steps = 0
 
+        # Reset environment and controller
+        print(f"  🔄 Resetting environment and CEM controller...")
         obs, info = env.reset()
         obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
         obs_sequence.append(obs_tensor)
 
         controller.reset(obs_tensor)
+        print(f"  ✅ Reset complete. Starting CEM-guided rollout...")
 
         for step in range(max_steps):
             # Get action from CEM planner (every R timesteps)
+            if step % 50 == 0:  # Progress updates every 50 steps
+                print(f"    🧠 Step {step}/{max_steps} | Planning action...")
+
             action = controller.act(obs_tensor)
             action_tensor = torch.tensor(action, dtype=torch.float32)
             action_sequence.append(action_tensor)
@@ -531,19 +596,49 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
             obs_sequence.append(obs_tensor)
             reward_sequence.append(torch.tensor(reward, dtype=torch.float32))
 
+            episode_reward += reward
+            episode_steps += 1
+
             # Update controller's internal state
             controller.update_state(action)
 
+            # Progress indicator every 100 steps
+            if (step + 1) % 100 == 0:
+                print(f"    Step {step + 1}/{max_steps} | Reward: {episode_reward:.2f}")
+
             if terminated or truncated:
+                reason = "terminated" if terminated else "truncated"
+                print(f"  🏁 CEM episode ended at step {episode_steps} ({reason})")
                 break
 
         # Add episode to buffer (excluding last observation for action alignment)
         buffer.add_episode(obs_sequence[:-1], action_sequence, reward_sequence)
 
-        if (episode + 1) % 5 == 0:
-            print(f"Collected {episode + 1}/{num_episodes} CEM episodes")
+        total_steps += episode_steps
+        total_reward += episode_reward
+        avg_reward = total_reward / (episode + 1)
+        avg_steps = total_steps / (episode + 1)
 
-    print(f"CEM data collection complete. Collected {len(buffer.observations)} timesteps")
+        print(f"  ✅ CEM Episode {episode + 1} complete!")
+        print(f"     Steps: {episode_steps} | Reward: {episode_reward:.3f}")
+        print(f"     Running averages - Steps: {avg_steps:.1f} | Reward: {avg_reward:.3f}")
+
+        # Progress update
+        if (episode + 1) % 2 == 0:  # More frequent updates for CEM (every 2 episodes)
+            print(f"\n📊 CEM PROGRESS UPDATE:")
+            print(f"   CEM episodes completed: {episode + 1}/{num_episodes}")
+            print(f"   Total CEM timesteps collected: {len(buffer.observations)}")
+            print(f"   Average CEM episode length: {avg_steps:.1f} steps")
+            print(f"   Average CEM episode reward: {avg_reward:.3f}")
+
+    print(f"\n{'='*60}")
+    print(f"🎉 CEM EPISODE COLLECTION COMPLETE!")
+    print(f"Total CEM episodes: {num_episodes}")
+    print(f"Total CEM timesteps: {len(buffer.observations)}")
+    print(f"Average CEM episode length: {total_steps / num_episodes:.1f} steps")
+    print(f"Average CEM episode reward: {total_reward / num_episodes:.3f}")
+    print(f"{'='*60}")
+
     return buffer
 
 def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
@@ -620,13 +715,21 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         "avg_episode_length": len(dataset.observations) / S if S > 0 else 0
     })
 
-    print(f"\nStarting training with:")
-    print(f"- Batch size: {B}")
-    print(f"- Sequence length: {L}")
-    print(f"- Number of epochs: {num_epochs}")
+    print(f"\n{'='*60}")
+    print(f"🚀 STARTING RSSM TRAINING")
+    print(f"Batch size: {B}")
+    print(f"Sequence length: {L}")
+    print(f"Total epochs: {num_epochs}")
+    print(f"Learning rate: {learning_rate}")
+    print(f"Evaluation every: {evaluate_every} epochs")
+    print(f"CEM planning every: {plan_every} epochs")
+    print(f"{'='*60}")
 
     # Training loop
     for epoch in range(num_epochs):
+        if epoch % 10 == 0:
+            print(f"\n🔄 Starting epoch {epoch}/{num_epochs}...")
+            print(f"   Current dataset size: {len(dataset.observations)} timesteps")
         # Sample batch of sequences
         obs_batch, action_batch, reward_batch = dataset.get_random_sequences(B, L)
 
@@ -674,10 +777,14 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         })
 
         if epoch % 10 == 0:
-            print(f"Epoch {epoch}: Total Loss: {total_loss.item():.4f}, "
+            print(f"📈 Epoch {epoch}: Total Loss: {total_loss.item():.4f}, "
                   f"Reconstruction: {reconstruction_loss.item():.4f}, "
                   f"Reward: {reward_loss.item():.4f}, "
                   f"KL: {kl_loss.item():.4f}")
+
+        # Quick progress indicator for non-milestone epochs
+        elif epoch % 5 == 0:
+            print(f"   Epoch {epoch}: Loss={total_loss.item():.4f}")
 
         if epoch % evaluate_every == 0 and epoch > 0:
             print(f"\n=== Evaluating Controller at Epoch {epoch} ===")
