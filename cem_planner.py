@@ -47,7 +47,18 @@ class CEMPlanner:
         mean = torch.zeros(self.horizon, self.action_dim, device=self.device)
         std = torch.ones(self.horizon, self.action_dim, device=self.device)
 
+        # Add debug print for first few planning calls
+        if not hasattr(self, '_plan_call_count'):
+            self._plan_call_count = 0
+
+        if self._plan_call_count < 3:
+            print(f"      CEM Plan call #{self._plan_call_count} - State: {current_state_belief.shape}, Hidden: {current_hidden.shape}")
+            print(f"      CEM Config: horizon={self.horizon}, iterations={self.iterations}, candidates={self.candidates}")
+        self._plan_call_count += 1
+
         for iteration in range(self.iterations):
+            if self._plan_call_count <= 3 and iteration == 0:
+                print(f"      Starting CEM iteration {iteration}/{self.iterations}...")
             # Sample J candidate action sequences
             action_sequences = self._sample_action_sequences(mean, std, batch_size)
 

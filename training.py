@@ -583,10 +583,18 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
 
         for step in range(max_steps):
             # Get action from CEM planner (every R timesteps)
-            if step % 50 == 0:  # Progress updates every 50 steps
+            if step % 10 == 0:  # More frequent progress updates every 10 steps
                 print(f"    🧠 Step {step}/{max_steps} | Planning action...")
 
+            # Add timing to see if CEM planning is slow
+            import time
+            start_time = time.time()
             action = controller.act(obs_tensor)
+            planning_time = time.time() - start_time
+
+            if step % 10 == 0:  # Report planning time every 10 steps
+                print(f"    ⏱️  CEM planning took {planning_time:.2f}s")
+
             action_tensor = torch.tensor(action, dtype=torch.float32)
             action_sequence.append(action_tensor)
 
