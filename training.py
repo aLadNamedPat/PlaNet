@@ -737,12 +737,29 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             print("Not enough data for training batch, skipping...")
             continue
 
+        # Debug tensor shapes
+        if epoch % 10 == 0:
+            print(f"   Batch shapes - Obs: {obs_batch.shape}, Actions: {action_batch.shape}, Rewards: {reward_batch.shape}")
+
         optimizer.zero_grad()
 
         # Encode observations
-        batch_size, seq_len, obs_size = obs_batch.shape
-        encoded_obs = rssm.encode(obs_batch.view(-1, obs_size))
-        encoded_obs = encoded_obs.view(batch_size, seq_len, -1)
+        # obs_batch shape: [batch_size, seq_len, channels, height, width]
+        batch_size, seq_len = obs_batch.shape[:2]
+        obs_channels, obs_height, obs_width = obs_batch.shape[2:]
+
+        # Only print batch info on milestone epochs to avoid spam
+        if epoch % 10 == 0:
+            print(f"   Processing batch: {batch_size} sequences x {seq_len} timesteps")
+            print(f"   Observation shape: {obs_channels}x{obs_height}x{obs_width}")
+
+        # Flatten for encoding: [batch_size * seq_len, channels, height, width]
+        flat_obs = obs_batch.view(-1, obs_channels, obs_height, obs_width)
+        encoded_obs = rssm.encode(flat_obs)
+
+        # Reshape back: [batch_size, seq_len, encoded_dim]
+        encoded_dim = encoded_obs.shape[-1]
+        encoded_obs = encoded_obs.view(batch_size, seq_len, encoded_dim)
 
         # Initialize states
         prev_state = torch.zeros(batch_size, latent_size)
