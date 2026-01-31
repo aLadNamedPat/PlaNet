@@ -74,6 +74,16 @@ class RSSM(nn.Module):
         return prior_sample, prior_mu, prior_logvar
 
     def sample_posterior(self, hidden_state, encoded_obs, deterministic=False):
+        # Debug tensor shapes
+        if hasattr(self, '_debug_count') and self._debug_count < 3:
+            print(f"      DEBUG - Hidden state shape: {hidden_state.shape}")
+            print(f"      DEBUG - Encoded obs shape: {encoded_obs.shape}")
+            self._debug_count += 1
+        elif not hasattr(self, '_debug_count'):
+            self._debug_count = 1
+            print(f"      DEBUG - Hidden state shape: {hidden_state.shape}")
+            print(f"      DEBUG - Encoded obs shape: {encoded_obs.shape}")
+
         posterior_input = torch.cat([hidden_state, encoded_obs], dim=-1)
         posterior_features = self.posterior(posterior_input)
         posterior_mu = self.posterior_mu(posterior_features)
@@ -93,6 +103,16 @@ class RSSM(nn.Module):
         # we'll assume here that both the encoded states and the actions are tensors
         # actions is composed of some number of batches, some number of timesteps, and obviously 1-hot encoded
         B, T, _ = actions.size()
+
+        # Debug input shapes (only on first call)
+        if not hasattr(self, '_debug_shapes'):
+            self._debug_shapes = True
+            print(f"    RSSM pass_through - Input shapes:")
+            print(f"      prev_stochastic_state: {prev_stochastic_state.shape}")
+            print(f"      prev_hidden: {prev_hidden.shape}")
+            print(f"      encoded_obs: {encoded_obs.shape}")
+            print(f"      actions: {actions.shape}")
+            print(f"      B={B}, T={T}")
 
         posterior_states_list = [prev_stochastic_state]
         prior_states_list = [prev_stochastic_state]
