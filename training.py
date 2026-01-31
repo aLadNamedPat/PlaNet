@@ -3,32 +3,46 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import gymnasium as gym
-from dm_control import suite
-from dm_control.suite.wrappers import pixels
 import os
 
-def setup_headless_rendering():
-    """Setup headless rendering for DMC environments"""
-    # Try different rendering backends
-    backends = [
-        ('egl', 'egl'),
-        ('osmesa', 'osmesa'),
-        ('glfw', 'glfw')
-    ]
+# Initialize environment setup for DMC BEFORE any dm_control imports
+def initialize_dmc_environment():
+    """Initialize DMC environment before any imports"""
+    print("Pre-configuring environment for DMC...")
 
-    for mujoco_gl, pyopengl_platform in backends:
-        try:
-            os.environ['MUJOCO_GL'] = mujoco_gl
-            os.environ['PYOPENGL_PLATFORM'] = pyopengl_platform
-            print(f"Trying rendering backend: {mujoco_gl}")
-            return
-        except Exception as e:
-            print(f"Backend {mujoco_gl} failed: {e}")
-            continue
+    # Check what's available
+    import ctypes.util
+    import subprocess
 
-    print("Warning: Could not set up any rendering backend")
+    osmesa_available = ctypes.util.find_library('OSMesa') is not None
 
-setup_headless_rendering()
+    try:
+        subprocess.run(['which', 'Xvfb'], check=True, capture_output=True)
+        xvfb_available = True
+    except:
+        xvfb_available = False
+
+    # Set the best backend before any MuJoCo imports
+    if osmesa_available:
+        print("Pre-setting OSMesa backend...")
+        os.environ['MUJOCO_GL'] = 'osmesa'
+        os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
+        os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
+    elif xvfb_available:
+        print("Pre-setting Xvfb backend...")
+        # Will start Xvfb later, but set the GL mode now
+        os.environ['MUJOCO_GL'] = 'glfw'
+    else:
+        print("Pre-setting EGL backend...")
+        os.environ['MUJOCO_GL'] = 'egl'
+        os.environ['PYOPENGL_PLATFORM'] = 'egl'
+
+# Initialize BEFORE any dm_control imports
+initialize_dmc_environment()
+
+# NOW import dm_control after environment is set up
+from dm_control import suite
+from dm_control.suite.wrappers import pixels
 from models.RSSM import RSSM
 from collections import deque
 import random
@@ -67,131 +81,124 @@ def check_rendering_libraries():
 
     print("=" * 50)
 
-def setup_virtual_display():
-    """Setup virtual display for GCP headless rendering"""
+def detect_best_rendering_backend():
+    """Detect the best rendering backend for this environment"""
+    import ctypes.util
     import subprocess
-    import time
 
-    print("Setting up virtual display for GCP...")
+    print("=== Detecting Best Rendering Backend ===")
 
+    # Check for OSMesa library
+    osmesa_available = ctypes.util.find_library('OSMesa') is not None
+    print(f"OSMesa library: {'✓ Available' if osmesa_available else '✗ Not found'}")
+
+    # Check for Xvfb
     try:
-        # Start Xvfb virtual display
-        print("Starting Xvfb virtual display...")
+        subprocess.run(['which', 'Xvfb'], check=True, capture_output=True)
+        xvfb_available = True
+        print("Xvfb: ✓ Available")
+    except:
+        xvfb_available = False
+        print("Xvfb: ✗ Not found")
+
+    # Choose backend based on availability
+    if osmesa_available:
+        print("→ Using OSMesa backend (software rendering)")
+        return 'osmesa'
+    elif xvfb_available:
+        print("→ Using Xvfb + GLFW backend (virtual display)")
+        return 'xvfb'
+    else:
+        print("→ Trying EGL backend (hardware rendering)")
+        return 'egl'
+
+
+def setup_rendering_environment(backend):
+    """Setup environment variables for the chosen backend"""
+
+    # Clear any existing conflicting variables
+    vars_to_clear = ['DISPLAY', 'XAUTHORITY', 'MUJOCO_GL', 'PYOPENGL_PLATFORM',
+                     'LIBGL_ALWAYS_SOFTWARE', 'MESA_GL_VERSION_OVERRIDE']
+
+    for var in vars_to_clear:
+        if var in os.environ:
+            del os.environ[var]
+
+    if backend == 'osmesa':
+        print("Setting up OSMesa software rendering...")
+        os.environ['MUJOCO_GL'] = 'osmesa'
+        os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
+        os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
+
+    elif backend == 'xvfb':
+        print("Setting up Xvfb virtual display...")
+        import subprocess
+        import time
+
+        # Start Xvfb
         subprocess.Popen([
-            'Xvfb', ':99', '-screen', '0', '1024x768x24'
+            'Xvfb', ':99', '-screen', '0', '1024x768x24', '-ac', '+extension', 'GLX'
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        # Wait for Xvfb to start
-        time.sleep(2)
-
-        # Set DISPLAY environment variable
+        time.sleep(3)  # Give Xvfb time to start
         os.environ['DISPLAY'] = ':99'
-        print("Virtual display started on :99")
-        return True
+        os.environ['MUJOCO_GL'] = 'glfw'
 
-    except FileNotFoundError:
-        print("Xvfb not found - trying without virtual display")
-        return False
-    except Exception as e:
-        print(f"Failed to start Xvfb: {e}")
-        return False
-
-
-def create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0):
-    """Create DMC environment with GCP-compatible rendering"""
-
-    check_rendering_libraries()
-
-    print("=== Setting up GCP-compatible rendering ===")
-
-    # Method 1: Try virtual display first
-    if setup_virtual_display():
-        try:
-            print("Attempting rendering with virtual display...")
-            os.environ['MUJOCO_GL'] = 'glfw'
-
-            from dm_control import suite
-            from dm_control.suite.wrappers import pixels
-
-            env = suite.load(domain_name=domain_name, task_name=task_name)
-            env = pixels.Wrapper(
-                env,
-                pixels_only=True,
-                render_kwargs={'height': height, 'width': width, 'camera_id': camera_id}
-            )
-
-            # Test rendering
-            time_step = env.reset()
-            pixels_obs = time_step.observation['pixels']
-            print(f"✓ Virtual display rendering successful! Shape: {pixels_obs.shape}")
-            return env
-
-        except Exception as e:
-            print(f"Virtual display rendering failed: {e}")
-
-    # Method 2: Try software Mesa
-    print("Trying software Mesa rendering...")
-    try:
-        # Clear DISPLAY and force software rendering
-        if 'DISPLAY' in os.environ:
-            del os.environ['DISPLAY']
-
-        os.environ['MUJOCO_GL'] = 'osmesa'
-        os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
-        os.environ['MESA_GL_VERSION_OVERRIDE'] = '3.3'
-        os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
-
-        from dm_control import suite
-        from dm_control.suite.wrappers import pixels
-
-        env = suite.load(domain_name=domain_name, task_name=task_name)
-        env = pixels.Wrapper(
-            env,
-            pixels_only=True,
-            render_kwargs={'height': height, 'width': width, 'camera_id': camera_id}
-        )
-
-        time_step = env.reset()
-        pixels_obs = time_step.observation['pixels']
-        print(f"✓ Software Mesa rendering successful! Shape: {pixels_obs.shape}")
-        return env
-
-    except Exception as e:
-        print(f"Software Mesa failed: {e}")
-
-    # Method 3: Try EGL
-    print("Trying EGL rendering...")
-    try:
+    elif backend == 'egl':
+        print("Setting up EGL rendering...")
         os.environ['MUJOCO_GL'] = 'egl'
         os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
+    print(f"Environment variables set: MUJOCO_GL={os.environ.get('MUJOCO_GL')}")
+
+
+def create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0):
+    """Create DMC environment with single-shot rendering setup"""
+
+    check_rendering_libraries()
+
+    # Detect and setup the best backend ONCE at startup
+    backend = detect_best_rendering_backend()
+    setup_rendering_environment(backend)
+
+    print(f"\n=== Creating DMC Environment with {backend.upper()} backend ===")
+
+    try:
+        # Import AFTER setting up environment
         from dm_control import suite
         from dm_control.suite.wrappers import pixels
 
+        print("Loading DMC suite environment...")
         env = suite.load(domain_name=domain_name, task_name=task_name)
+
+        print("Adding pixel wrapper...")
         env = pixels.Wrapper(
             env,
             pixels_only=True,
             render_kwargs={'height': height, 'width': width, 'camera_id': camera_id}
         )
 
+        print("Testing environment reset and rendering...")
         time_step = env.reset()
         pixels_obs = time_step.observation['pixels']
-        print(f"✓ EGL rendering successful! Shape: {pixels_obs.shape}")
+        print(f"✓ SUCCESS! Rendered observation shape: {pixels_obs.shape}")
+
         return env
 
     except Exception as e:
-        print(f"EGL failed: {e}")
+        print(f"\n✗ FAILED with {backend} backend")
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
 
-    # If all methods fail, provide instructions
-    print("\n" + "="*60)
-    print("ALL RENDERING METHODS FAILED")
-    print("For GCP, you need to install rendering libraries:")
-    print("sudo apt update")
-    print("sudo apt install -y libosmesa6-dev mesa-utils xvfb")
-    print("="*60)
+        print("\n" + "="*60)
+        print("RENDERING SETUP FAILED")
+        print("Please install missing packages:")
+        print("  sudo apt update")
+        print("  sudo apt install -y libosmesa6-dev mesa-utils xvfb")
+        print("="*60)
 
-    raise RuntimeError("Could not initialize DMC environment with any rendering backend on GCP")
+        raise RuntimeError(f"DMC environment creation failed with {backend} backend")
 
 
 class CPURenderWrapper:
