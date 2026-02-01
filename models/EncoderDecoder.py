@@ -1,91 +1,55 @@
 ### This is where we'll build the encoder and decoders
-
-# The encoder only takes the current observation and constructed an "encoded" observation from there
-
+# The encoder only takes the current observation and constructs an "encoded" observation from there
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class Encoder(nn.Module):
-    def __init__(self, input_channels=3, base_channels=32, latent_dim=1024, dropout_prob=0.2):
+    def __init__(self, input_channels=3, base_channels=32, latent_dim=1024):
         super(Encoder, self).__init__()
-
         self.base_channels = base_channels
-
-        self.conv1 = nn.Conv2d(input_channels, base_channels, kernel_size=4, stride=2, padding=1)
-        self.bn1 = nn.BatchNorm2d(base_channels)
-        self.dropout1 = nn.Dropout2d(dropout_prob)
-
-        self.conv2 = nn.Conv2d(base_channels, base_channels * 2, kernel_size=4, stride=2, padding=1)
-        self.bn2 = nn.BatchNorm2d(base_channels * 2)
-        self.dropout2 = nn.Dropout2d(dropout_prob)
-
-        self.conv3 = nn.Conv2d(base_channels * 2, base_channels * 4, kernel_size=4, stride=2, padding=1)
-        self.bn3 = nn.BatchNorm2d(base_channels * 4)
-        self.dropout3 = nn.Dropout2d(dropout_prob)
-
-        self.conv4 = nn.Conv2d(base_channels * 4, base_channels * 8, kernel_size=4, stride=2, padding=1)
-        self.bn4 = nn.BatchNorm2d(base_channels * 8)
-        self.dropout4 = nn.Dropout2d(dropout_prob)
-
-        # For 64x64 input: 64->32->16->8->4, so final size is 4x4
-        # With base_channels=32, final features = (32*8) * 4 * 4 = 4096
-        final_conv_size = base_channels * 8 * 4 * 4  # 256 * 16 = 4096
-
-        self.fc_mu = nn.Linear(final_conv_size, latent_dim)
-        self.fc_logvar = nn.Linear(final_conv_size, latent_dim)
-
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
+        
+        # No padding to match PlaNet: 64 -> 31 -> 14 -> 6 -> 2
+        self.conv1 = nn.Conv2d(input_channels, base_channels, kernel_size=4, stride=2)
+        self.conv2 = nn.Conv2d(base_channels, base_channels * 2, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(base_channels * 2, base_channels * 4, kernel_size=4, stride=2)
+        self.conv4 = nn.Conv2d(base_channels * 4, base_channels * 8, kernel_size=4, stride=2)   
+        final_conv_size = base_channels * 8 * 2 * 2  # 256 * 4 = 1024
+        
+        self.fc = nn.Identity() if latent_dim == 1024 else nn.Linear(final_conv_size, latent_dim)
 
     def forward(self, x):
-        x1 = self.dropout1(F.relu(self.bn1(self.conv1(x))))
-        x2 = self.dropout2(F.relu(self.bn2(self.conv2(x1))))
-        x3 = self.dropout3(F.relu(self.bn3(self.conv3(x2))))
-        x4 = self.dropout4(F.relu(self.bn4(self.conv4(x3))))
-
-        x_fin = x4.view(x4.size(0), -1)
-
-        mu = self.fc_mu(x_fin)
-        logvar = self.fc_logvar(x_fin)
-
-        out = self.reparameterize(mu, logvar)
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.conv4(x))
+        x = x.view(x.size(0), -1)
+        out = self.fc(x)
         return out
 
-class Decoder(nn.Module):
-    def __init__(self, latent_dim=30, hidden_dim=200, base_channels=32, output_channels=3, dropout_prob=0.2):
-        super(Decoder, self).__init__()
 
+class Decoder(nn.Module):
+    def __init__(self, latent_dim=30, hidden_dim=200, base_channels=32, output_channels=3):
+        super(Decoder, self).__init__()
         self.base_channels = base_channels
+        
         # Input is latent_dim (stochastic state) + hidden_dim (deterministic state)
         # latent_dim=30 (posterior/prior state), hidden_dim=200 (GRU hidden state)
-        self.fc = nn.Linear(latent_dim + hidden_dim, base_channels * 8 * 4 * 4)
-
-        self.deconv1 = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, kernel_size=4, stride=2, padding=1)
-        self.bn1 = nn.BatchNorm2d(base_channels * 4)
-        self.dropout1 = nn.Dropout2d(dropout_prob)
-
-        self.deconv2 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, kernel_size=4, stride=2, padding=1)
-        self.bn2 = nn.BatchNorm2d(base_channels * 2)
-        self.dropout2 = nn.Dropout2d(dropout_prob)
-
-        self.deconv3 = nn.ConvTranspose2d(base_channels * 2, base_channels, kernel_size=4, stride=2, padding=1)
-        self.bn3 = nn.BatchNorm2d(base_channels)
-        self.dropout3 = nn.Dropout2d(dropout_prob)
-
-        self.deconv4 = nn.ConvTranspose2d(base_channels, output_channels, kernel_size=4, stride=2, padding=1)
+        self.fc = nn.Linear(latent_dim + hidden_dim, base_channels * 8 * 2 * 2)  # -> 1024
+        
+        # No padding to match PlaNet: 2 -> 6 -> 14 -> 31 -> 64
+        self.deconv1 = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, kernel_size=4, stride=2)
+        self.deconv2 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, kernel_size=4, stride=2)
+        self.deconv3 = nn.ConvTranspose2d(base_channels * 2, base_channels, kernel_size=4, stride=2)
+        self.deconv4 = nn.ConvTranspose2d(base_channels, output_channels, kernel_size=4, stride=2)
 
     def forward(self, z):
         x = self.fc(z)
-        x = x.view(x.size(0), self.base_channels * 8, 4, 4)
-
-        x1 = self.dropout1(F.relu(self.bn1(self.deconv1(x))))
-        x2 = self.dropout2(F.relu(self.bn2(self.deconv2(x1))))
-        x3 = self.dropout3(F.relu(self.bn3(self.deconv3(x2))))
-        x4 = self.deconv4(x3)
-
-        x = torch.sigmoid(x4)
-
+        x = x.view(x.size(0), self.base_channels * 8, 2, 2)
+        x = F.relu(self.deconv1(x))
+        x = F.relu(self.deconv2(x))
+        x = F.relu(self.deconv3(x))
+        x = self.deconv4(x)
+        x = torch.sigmoid(x)
         return x

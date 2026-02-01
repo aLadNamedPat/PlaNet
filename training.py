@@ -495,7 +495,7 @@ def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
         avg_return: Average return over episodes
     """
     action_dim = env.action_space.shape[0]
-    controller = PlaNetController(rssm, action_dim, horizon=4, action_repeat=2)
+    controller = PlaNetController(rssm, action_dim, horizon=8, action_repeat=2)
 
     episode_returns = []
 
@@ -550,7 +550,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
         ExperienceBuffer with CEM-generated data
     """
     action_dim = env.action_space.shape[0]
-    controller = PlaNetController(rssm, action_dim, horizon=4, action_repeat=action_repeat)
+    controller = PlaNetController(rssm, action_dim, horizon=8, action_repeat=action_repeat)
 
     buffer = ExperienceBuffer()
 
@@ -559,7 +559,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
     print(f"Target episodes: {num_episodes}")
     print(f"Max steps per episode: {max_steps}")
     print(f"Action repeat (R): {action_repeat}")
-    print(f"Planning horizon: 12")
+    print(f"Planning horizon: 8")
     print(f"{'='*60}")
 
     total_steps = 0
@@ -921,9 +921,9 @@ if __name__ == "__main__":
     trained_rssm = train_rssm(
         S=1, B=50, L=50,
         num_epochs= 50000,
-        evaluate_every=10,
+        evaluate_every=500,
         evaluation_episodes=1,
-        plan_every=10,  # CEM planning every 25 epochs
+        plan_every=5,  # CEM planning every 25 epochs
         planning_episodes=1,
         action_repeat=2  # Action repeat parameter R
     )
