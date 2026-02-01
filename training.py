@@ -501,7 +501,8 @@ def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
 
     for episode in range(num_episodes):
         obs, info = env.reset()
-        obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32)
+        # Convert from [H, W, C] to [C, H, W] for PyTorch CNN and normalize
+        obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
 
         controller.reset(obs_tensor)
         episode_return = 0.0
@@ -512,7 +513,8 @@ def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
 
             # Take action in environment
             obs, reward, terminated, truncated, info = env.step(action)
-            obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32)
+            # Convert from [H, W, C] to [C, H, W] for PyTorch CNN and normalize
+            obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
 
             episode_return += reward
 
