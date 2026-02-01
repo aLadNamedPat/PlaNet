@@ -873,12 +873,12 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
 if __name__ == "__main__":
     # Train the model with CEM evaluation and planning
     trained_rssm = train_rssm(
-        S=2, B=50, L=50,
-        num_epochs= 100,
+        S=5, B=50, L=50,
+        num_epochs= 50000,
         evaluate_every=50,
-        evaluation_episodes=3,
-        plan_every=25,  # CEM planning every 25 epochs
-        planning_episodes=3,  # Collect 3 episodes per planning phase
+        evaluation_episodes=1,
+        plan_every=100,  # CEM planning every 25 epochs
+        planning_episodes=10,  # Collect 3 episodes per planning phase
         action_repeat=2  # Action repeat parameter R
     )
 
