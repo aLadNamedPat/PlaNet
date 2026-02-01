@@ -839,7 +839,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             predicted_rewards, 
             reward_batch_aligned,
             free_nats=3.0,
-            debug=(epoch % 100 == 0)
+            debug=(epoch % 50 == 0)
         )
 
         total_loss = reconstruction_loss + reward_loss + kl_loss
@@ -857,7 +857,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             "raw_kl": raw_kl.item(),  # Add this line
             "learning_rate": learning_rate
         })
-        
+
         if epoch % 10 == 0:
             print(f"📈 Epoch {epoch}: Total Loss: {total_loss.item():.4f}, "
                   f"Reconstruction: {reconstruction_loss.item():.4f}, "
