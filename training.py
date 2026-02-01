@@ -921,9 +921,9 @@ if __name__ == "__main__":
     trained_rssm = train_rssm(
         S=1, B=50, L=50,
         num_epochs= 50000,
-        evaluate_every=50,
+        evaluate_every=10,
         evaluation_episodes=1,
-        plan_every=100,  # CEM planning every 25 epochs
+        plan_every=10,  # CEM planning every 25 epochs
         planning_episodes=1,
         action_repeat=2  # Action repeat parameter R
     )

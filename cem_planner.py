@@ -272,6 +272,9 @@ class PlaNetController:
         """Reset controller with initial observation"""
         # Encode initial observation
         with torch.no_grad():
+            # Move observation to same device as model and ensure correct shape
+            device = next(self.rssm.parameters()).device
+            initial_obs = initial_obs.to(device)
             # initial_obs shape: [3, 64, 64], need [1, 3, 64, 64] for encoder
             encoded_obs = self.rssm.encode(initial_obs.unsqueeze(0))
 
@@ -280,8 +283,8 @@ class PlaNetController:
             latent_size = self.rssm.prior_mu.in_features
             hidden_size = self.rssm.rnn.hidden_size
 
-            self.current_state_belief = torch.zeros(batch_size, latent_size)
-            self.current_hidden = torch.zeros(batch_size, hidden_size)
+            self.current_state_belief = torch.zeros(batch_size, latent_size, device=device)
+            self.current_hidden = torch.zeros(batch_size, hidden_size, device=device)
 
             # Update with first observation using posterior
             # encoded_obs shape: [1, 1024], squeeze to [1024] then unsqueeze to [1, 1024] for consistency
@@ -309,6 +312,9 @@ class PlaNetController:
 
         # Time to plan a new action
         with torch.no_grad():
+            # Move observation to same device as model
+            device = next(self.rssm.parameters()).device
+            obs = obs.to(device)
             # Encode current observation
             # obs shape: [3, 64, 64], need [1, 3, 64, 64] for encoder
             encoded_obs = self.rssm.encode(obs.unsqueeze(0))
