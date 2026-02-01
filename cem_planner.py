@@ -119,11 +119,8 @@ class CEMPlanner:
 
         # Debug: verify expanded tensor shapes
         if not hasattr(self, '_expand_debug'):
-            debug_msg = f"EXPAND DEBUG: original state: {current_state_belief.shape}, expanded: {expanded_state.shape}\n"
-            debug_msg += f"EXPAND DEBUG: original hidden: {current_hidden.shape}, expanded: {expanded_hidden.shape}\n"
-            print(debug_msg)
-            with open('/home/patrick/Documents/PlaNet/cem_debug.txt', 'w') as f:
-                f.write(debug_msg)
+            print(f"      EXPAND DEBUG: original state: {current_state_belief.shape}, expanded: {expanded_state.shape}")
+            print(f"      EXPAND DEBUG: original hidden: {current_hidden.shape}, expanded: {expanded_hidden.shape}")
             self._expand_debug = True
 
         # Vectorized rollout for all candidates simultaneously
@@ -198,9 +195,17 @@ class CEMPlanner:
                 if self._plan_call_count <= 1 and t == 0:
                     print(f"        current_states.shape: {list(current_states.shape)}")
                     print(f"        actions_t.shape: {list(actions_t.shape)}")
-                    for i, tensor in enumerate([current_states, actions_t]):
-                        for dim in range(tensor.dim()):
-                            print(f"        tensor[{i}].size({dim}) = {tensor.size(dim)}")
+                    print(f"        current_states.dim()={current_states.dim()}, actions_t.dim()={actions_t.dim()}")
+
+                    # Try concatenation with explicit error handling
+                    try:
+                        test_concat = torch.cat([current_states, actions_t], dim=-1)
+                        print(f"        TEST CONCAT SUCCESS: {test_concat.shape}")
+                    except RuntimeError as e:
+                        print(f"        TEST CONCAT FAILED: {e}")
+                        print(f"        Tensor details:")
+                        print(f"          current_states: shape={current_states.shape}, strides={current_states.stride()}")
+                        print(f"          actions_t: shape={actions_t.shape}, strides={actions_t.stride()}")
 
                 state_action_input = torch.cat([current_states, actions_t], dim=-1)
                 state_action_embeddings = self.rssm.state_action(state_action_input)  # [candidates, sa_dim]
