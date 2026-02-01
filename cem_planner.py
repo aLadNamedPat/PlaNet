@@ -182,18 +182,9 @@ class CEMPlanner:
         with torch.no_grad():
             for t in range(self.horizon):
                 # Get actions for all candidates at timestep t
-                actions_t = action_sequences[:, t, :]  # [candidates, action_dim]
-
-                # Debug: print shapes before concatenation
-                if self._plan_call_count <= 1 and t == 0:
-                    print(f"        DEBUG t={t}: current_states.shape={current_states.shape}, actions_t.shape={actions_t.shape}")
+                actions_t = action_sequences[:, t, :].contiguous()  # [candidates, action_dim]
 
                 # Compute state-action embeddings for all candidates
-                # Extra debug right before concatenation
-                if self._plan_call_count <= 1 and t == 0:
-                    print(f"        CONCAT DEBUG: About to concat current_states{current_states.shape} + actions_t{actions_t.shape}")
-                    print(f"        CONCAT DEBUG: current_states.is_contiguous()={current_states.is_contiguous()}, actions_t.is_contiguous()={actions_t.is_contiguous()}")
-
                 state_action_input = torch.cat([current_states, actions_t], dim=-1)
                 state_action_embeddings = self.rssm.state_action(state_action_input)  # [candidates, sa_dim]
 
