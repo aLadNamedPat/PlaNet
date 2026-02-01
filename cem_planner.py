@@ -5,7 +5,7 @@ import numpy as np
 class CEMPlanner:
     """Cross-Entropy Method planner for PlaNet - Ultra-Fast Version"""
 
-    def __init__(self, rssm, action_dim, horizon=3, iterations=2, candidates=20, top_k=5, device='cpu'):
+    def __init__(self, rssm, action_dim, horizon=12, iterations=6, candidates=50, top_k=5, device='cpu'):
         """
         Initialize CEM planner
 
