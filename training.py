@@ -699,9 +699,6 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
     obs_shape = env.observation_space.shape 
     action_dim = env.action_space.shape[0]
 
-    print(f"Observation shape: {obs_shape}")
-    print(f"Action dimension: {action_dim}")
-
     # RSSM hyperparameters
     encoded_size = 1024
     latent_size = 30
@@ -755,16 +752,6 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         "avg_episode_length": len(dataset.observations) / S if S > 0 else 0
     })
 
-    print(f"\n{'='*60}")
-    print(f"🚀 STARTING RSSM TRAINING")
-    print(f"Batch size: {B}")
-    print(f"Sequence length: {L}")
-    print(f"Total epochs: {num_epochs}")
-    print(f"Learning rate: {learning_rate}")
-    print(f"Evaluation every: {evaluate_every} epochs")
-    print(f"CEM planning every: {plan_every} epochs")
-    print(f"{'='*60}")
-
     # Training loop
     best_eval_return = float('-inf')
     checkpoint_dir = 'checkpoints'
@@ -810,6 +797,13 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         encoded_dim = encoded_obs.shape[-1]
         encoded_obs = encoded_obs.view(batch_size, seq_len, encoded_dim)
 
+        encoded_obs_for_posterior = encoded_obs[:, 1:, :]      # o_1 to o_{L-1} (next observations)
+        obs_targets = obs_batch[:, 1:, :, :, :]                # Raw pixels for reconstruction loss
+        action_batch_aligned = action_batch[:, :-1, :]         # a_0 to a_{L-2}
+        reward_batch_aligned = reward_batch[:, :-1]            # r_0 to r_{L-2}
+
+        effective_seq_len = seq_len - 1
+
         # Debug encoded dimensions on first epoch
         if epoch == 0:
             print(f"   Encoded observation shape: [batch_size, seq_len, encoded_dim] = {encoded_obs.shape}")
@@ -818,22 +812,32 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         prev_state = torch.zeros(batch_size, latent_size, device=device)
         prev_hidden = torch.zeros(batch_size, hidden_size, device=device)
 
-        rssm_output = rssm.pass_through(prev_state, prev_hidden, encoded_obs, action_batch)
+        rssm_output = rssm.pass_through(
+            prev_state, 
+            prev_hidden, 
+            encoded_obs_for_posterior,
+            action_batch_aligned
+        )
+
         prior_states, posterior_states, hiddens, _, _, _, _, predicted_rewards = rssm_output
         reconstructed = []
 
-        for t in range(seq_len):
+        for t in range(effective_seq_len):
             decoded = rssm.decode(hiddens[:, t, :], posterior_states[:, t, :])
             reconstructed.append(decoded)
 
         reconstructed_obs = torch.stack(reconstructed, dim=1)
 
         reconstruction_loss, reward_loss, kl_loss = compute_losses(
-            rssm_output, reconstructed_obs, obs_batch, predicted_rewards, reward_batch,
+            rssm_output, 
+            reconstructed_obs, 
+            obs_targets,
+            predicted_rewards, 
+            reward_batch_aligned,
             free_nats=3.0,
             debug=(epoch % 100 == 0)
         )
-
+        
         total_loss = reconstruction_loss + reward_loss + kl_loss
 
         total_loss.backward()

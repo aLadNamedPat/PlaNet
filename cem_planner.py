@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 
 class CEMPlanner:
@@ -104,87 +105,43 @@ class CEMPlanner:
         
         # current_state_belief: [1, latent_size] -> [candidates, latent_size]
         # current_hidden: [1, hidden_size] -> [candidates, hidden_size]
-        expanded_state = current_state_belief.repeat(candidates, 1)  # [50, 30]
-        expanded_hidden = current_hidden.repeat(candidates, 1)  # [50, 200]
+        expanded_state = current_state_belief.repeat(candidates, 1)
+        expanded_hidden = current_hidden.repeat(candidates, 1)
         
         return self._rollout_trajectory_vectorized(action_sequences, expanded_state, expanded_hidden)
-
-    def _rollout_trajectory(self, action_sequence, initial_state, initial_hidden):
-        """
-        Rollout a single trajectory and compute return
-
-        Args:
-            action_sequence: [1, horizon, action_dim]
-            initial_state: [batch_size, latent_size]
-            initial_hidden: [batch_size, hidden_size]
-
-        Returns:
-            total_return: Sum of predicted rewards along trajectory
-        """
-        current_state = initial_state
-        current_hidden = initial_hidden
-        total_return = 0.0
-
-        with torch.no_grad():  # No gradients needed for planning
-            for t in range(self.horizon):
-                action_t = action_sequence[:, t, :].expand(current_state.shape[0], -1)
-
-                # Predict next state using prior (no observations available)
-                state_action_embedding = self.rssm.state_action(
-                    torch.cat([current_state, action_t], dim=-1)
-                )
-
-                # Update hidden state
-                rnn_input = torch.cat([state_action_embedding, current_hidden], dim=-1).unsqueeze(1)
-                _, current_hidden = self.rssm.rnn(rnn_input)
-                current_hidden = current_hidden.squeeze(0)
-
-                # Sample from prior distribution (deterministic for planning)
-                current_state, _, _ = self.rssm.sample_prior(current_hidden, deterministic=True)
-
-                # Predict reward
-                predicted_reward = self.rssm.reward(
-                    torch.cat([current_state, current_hidden], dim=-1)
-                )
-
-                total_return += predicted_reward.mean()  # Average over batch dimension
-
-        return total_return
 
     def _rollout_trajectory_vectorized(self, action_sequences, initial_states, initial_hiddens):
         """
         Vectorized rollout for multiple trajectories simultaneously
+        
+        Uses the same dynamics as RSSM.pass_through:
+        1. Embed (state, action) with fc_embed_state_action + ReLU
+        2. Update hidden with GRUCell
+        3. Sample next state from prior (no observations during planning)
         """
         candidates = action_sequences.shape[0]
-        current_states = initial_states  # [candidates, latent_size]
-        current_hiddens = initial_hiddens  # [candidates, hidden_size]
+        current_states = initial_states      # [candidates, latent_size]
+        current_hiddens = initial_hiddens    # [candidates, hidden_size]
         total_returns = torch.zeros(candidates, device=self.device)
 
         with torch.no_grad():
             for t in range(self.horizon):
                 actions_t = action_sequences[:, t, :]  # [candidates, action_dim]
 
+                # Step 1: Embed state-action (matches RSSM.pass_through)
                 state_action_input = torch.cat([current_states, actions_t], dim=-1)
-                state_action_embeddings = self.rssm.state_action(state_action_input)  # [candidates, sa_dim]
+                embedded = F.relu(self.rssm.fc_embed_state_action(state_action_input))  # [candidates, hidden_size]
 
-                # Match RSSM pass_through: concatenate state_action with hidden
-                rnn_input_features = torch.cat([state_action_embeddings, current_hiddens], dim=-1)  # [candidates, sa_dim + hidden_size]
-                
-                # GRU with batch_first=False expects: [seq_len, batch, features]
-                # Use seq_len=1, batch=candidates
-                rnn_inputs = rnn_input_features.unsqueeze(0)  # [1, candidates, features]
-                
-                # Hidden state: [num_layers, batch, hidden_size]
-                hidden_for_rnn = current_hiddens.unsqueeze(0)  # [1, candidates, hidden_size]
-                
-                _, new_hidden = self.rssm.rnn(rnn_inputs, hidden_for_rnn)
-                current_hiddens = new_hidden.squeeze(0)  # [candidates, hidden_size]
+                # Step 2: Update hidden state with GRUCell (matches RSSM.pass_through)
+                current_hiddens = self.rssm.rnn(embedded, current_hiddens)  # [candidates, hidden_size]
 
+                # Step 3: Sample next state from prior (no observation available during planning)
                 current_states, _, _ = self.rssm.sample_prior(current_hiddens, deterministic=True)
 
+                # Step 4: Predict reward
                 predicted_rewards = self.rssm.reward(
                     torch.cat([current_states, current_hiddens], dim=-1)
-                ).squeeze(-1)
+                ).squeeze(-1)  # [candidates]
 
                 total_returns += predicted_rewards
 
@@ -238,7 +195,6 @@ class PlaNetController:
 
     def reset(self, initial_obs):
         """Reset controller with initial observation"""
-        # Encode initial observation
         with torch.no_grad():
             # Move observation to same device as model and ensure correct shape
             device = next(self.rssm.parameters()).device
@@ -248,14 +204,15 @@ class PlaNetController:
 
             # Initialize state belief and hidden state
             batch_size = 1
-            latent_size = self.rssm.prior_mu.in_features
+            # Get latent_size from prior_mu input features (which takes 200 from prior network)
+            # Actually need to get it from prior_mu output features
+            latent_size = self.rssm.prior_mu.out_features
             hidden_size = self.rssm.rnn.hidden_size
 
             self.current_state_belief = torch.zeros(batch_size, latent_size, device=device)
             self.current_hidden = torch.zeros(batch_size, hidden_size, device=device)
 
             # Update with first observation using posterior
-            # encoded_obs shape: [1, 1024], squeeze to [1024] then unsqueeze to [1, 1024] for consistency
             self.current_state_belief, _, _ = self.rssm.sample_posterior(
                 self.current_hidden, encoded_obs, deterministic=True
             )
@@ -284,11 +241,9 @@ class PlaNetController:
             device = next(self.rssm.parameters()).device
             obs = obs.to(device)
             # Encode current observation
-            # obs shape: [3, 64, 64], need [1, 3, 64, 64] for encoder
             encoded_obs = self.rssm.encode(obs.unsqueeze(0))
 
             # Update state belief with current observation (posterior)
-            # encoded_obs shape: [1, 1024]
             self.current_state_belief, _, _ = self.rssm.sample_posterior(
                 self.current_hidden, encoded_obs, deterministic=True
             )
@@ -302,22 +257,26 @@ class PlaNetController:
             return action
 
     def update_state(self, action):
-        """Update internal state belief after taking action"""
+        """
+        Update internal state belief after taking action
+        
+        Uses the same dynamics as RSSM.pass_through:
+        1. Embed (state, action) with fc_embed_state_action + ReLU  
+        2. Update hidden with GRUCell
+        3. Sample next state from prior (will be refined by posterior on next act() call)
+        """
         with torch.no_grad():
-            # Move action tensor to same device as state belief
             device = self.current_state_belief.device
             action_tensor = torch.tensor(action, dtype=torch.float32, device=device).unsqueeze(0)
 
-            # Update hidden state using model dynamics
-            state_action_embedding = self.rssm.state_action(
-                torch.cat([self.current_state_belief, action_tensor], dim=-1)
-            )
+            # Step 1: Embed state-action (matches RSSM.pass_through)
+            state_action_input = torch.cat([self.current_state_belief, action_tensor], dim=-1)
+            embedded = F.relu(self.rssm.fc_embed_state_action(state_action_input))
 
-            rnn_input = torch.cat([state_action_embedding, self.current_hidden], dim=-1).unsqueeze(1)
-            _, self.current_hidden = self.rssm.rnn(rnn_input)
-            self.current_hidden = self.current_hidden.squeeze(0)
+            # Step 2: Update hidden state with GRUCell (matches RSSM.pass_through)
+            self.current_hidden = self.rssm.rnn(embedded, self.current_hidden)
 
-            # Update state belief using prior (no observation yet)
+            # Step 3: Update state belief using prior (no observation yet)
             self.current_state_belief, _, _ = self.rssm.sample_prior(
                 self.current_hidden, deterministic=True
             )
