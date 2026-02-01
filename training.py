@@ -873,7 +873,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
 if __name__ == "__main__":
     # Train the model with CEM evaluation and planning
     trained_rssm = train_rssm(
-        S=20, B=50, L=50,
+        S=5, B=50, L=50,
         num_epochs= 100,
         evaluate_every=50,
         evaluation_episodes=3,

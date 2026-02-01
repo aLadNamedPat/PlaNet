@@ -183,6 +183,10 @@ class CEMPlanner:
                 # Get actions for all candidates at timestep t
                 actions_t = action_sequences[:, t, :]  # [candidates, action_dim]
 
+                # Debug: print shapes before concatenation
+                if self._plan_call_count <= 1 and t == 0:
+                    print(f"        DEBUG t={t}: current_states.shape={current_states.shape}, actions_t.shape={actions_t.shape}")
+
                 # Compute state-action embeddings for all candidates
                 state_action_embeddings = self.rssm.state_action(
                     torch.cat([current_states, actions_t], dim=-1)
