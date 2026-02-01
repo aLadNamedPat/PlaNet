@@ -838,7 +838,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             obs_targets,
             predicted_rewards, 
             reward_batch_aligned,
-            free_nats=3.0,
+            free_nats=1.0,
             debug=(epoch % 50 == 0)
         )
 
