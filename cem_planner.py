@@ -111,20 +111,27 @@ class CEMPlanner:
         candidates = action_sequences.shape[0]
         batch_size = current_state_belief.shape[0]
 
-        # Vectorized evaluation: evaluate all candidates at once
-        # Expand states to [candidates, latent_size] and [candidates, hidden_size]
-        # Use repeat instead of expand to ensure proper tensor copies
-        expanded_state = current_state_belief.repeat(candidates, 1)
-        expanded_hidden = current_hidden.repeat(candidates, 1)
+        # Expand state belief and hidden state for all candidates
+        # We'll evaluate each candidate independently (single trajectory per sequence)
+        expanded_state = current_state_belief.unsqueeze(0).expand(candidates, -1, -1).reshape(-1, current_state_belief.shape[-1])
+        expanded_hidden = current_hidden.unsqueeze(0).expand(candidates, -1, -1).reshape(-1, current_hidden.shape[-1])
 
-        # Debug: verify expanded tensor shapes
-        if not hasattr(self, '_expand_debug'):
-            print(f"      EXPAND DEBUG: original state: {current_state_belief.shape}, expanded: {expanded_state.shape}")
-            print(f"      EXPAND DEBUG: original hidden: {current_hidden.shape}, expanded: {expanded_hidden.shape}")
-            self._expand_debug = True
+        # Flatten action sequences for batch processing
+        flat_actions = action_sequences.reshape(-1, self.horizon, self.action_dim)
 
-        # Vectorized rollout for all candidates simultaneously
-        return self._rollout_trajectory_vectorized(action_sequences, expanded_state, expanded_hidden)
+        returns = []
+
+        for i in range(candidates):
+            # Get action sequence for this candidate
+            candidate_actions = flat_actions[i:i+1]  # [1, horizon, action_dim]
+            candidate_state = expanded_state[i*batch_size:(i+1)*batch_size]  # [batch_size, latent_size]
+            candidate_hidden = expanded_hidden[i*batch_size:(i+1)*batch_size]  # [batch_size, hidden_size]
+
+            # Rollout trajectory using the model (prior only for planning)
+            trajectory_return = self._rollout_trajectory(candidate_actions, candidate_state, candidate_hidden)
+            returns.append(trajectory_return)
+
+        return torch.stack(returns)
 
     def _rollout_trajectory(self, action_sequence, initial_state, initial_hidden):
         """
@@ -191,23 +198,11 @@ class CEMPlanner:
                 actions_t = action_sequences[:, t, :].contiguous()  # [candidates, action_dim]
 
                 # Compute state-action embeddings for all candidates
-                # Debug: check exact tensor dimensions
-                if self._plan_call_count <= 1 and t == 0:
-                    print(f"        current_states.shape: {list(current_states.shape)}")
-                    print(f"        actions_t.shape: {list(actions_t.shape)}")
-                    print(f"        current_states.dim()={current_states.dim()}, actions_t.dim()={actions_t.dim()}")
+                # Create copies of tensors to avoid any reference issues
+                current_states_copy = current_states.clone()
+                actions_t_copy = actions_t.clone()
 
-                    # Try concatenation with explicit error handling
-                    try:
-                        test_concat = torch.cat([current_states, actions_t], dim=-1)
-                        print(f"        TEST CONCAT SUCCESS: {test_concat.shape}")
-                    except RuntimeError as e:
-                        print(f"        TEST CONCAT FAILED: {e}")
-                        print(f"        Tensor details:")
-                        print(f"          current_states: shape={current_states.shape}, strides={current_states.stride()}")
-                        print(f"          actions_t: shape={actions_t.shape}, strides={actions_t.stride()}")
-
-                state_action_input = torch.cat([current_states, actions_t], dim=-1)
+                state_action_input = torch.cat([current_states_copy, actions_t_copy], dim=-1)
                 state_action_embeddings = self.rssm.state_action(state_action_input)  # [candidates, sa_dim]
 
                 # Update hidden states for all candidates
