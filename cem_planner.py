@@ -102,9 +102,10 @@ class CEMPlanner:
         """
         candidates = action_sequences.shape[0]
         
-        # Expand to [candidates, latent_size] and [candidates, hidden_size]
-        expanded_state = current_state_belief.expand(candidates, -1).contiguous()
-        expanded_hidden = current_hidden.expand(candidates, -1).contiguous()
+        # current_state_belief: [1, latent_size] -> [candidates, latent_size]
+        # current_hidden: [1, hidden_size] -> [candidates, hidden_size]
+        expanded_state = current_state_belief.repeat(candidates, 1)  # [50, 30]
+        expanded_hidden = current_hidden.repeat(candidates, 1)  # [50, 200]
         
         return self._rollout_trajectory_vectorized(action_sequences, expanded_state, expanded_hidden)
 
