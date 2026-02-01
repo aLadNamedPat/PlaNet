@@ -117,6 +117,15 @@ class CEMPlanner:
         expanded_state = current_state_belief.repeat(candidates, 1)
         expanded_hidden = current_hidden.repeat(candidates, 1)
 
+        # Debug: verify expanded tensor shapes
+        if not hasattr(self, '_expand_debug'):
+            debug_msg = f"EXPAND DEBUG: original state: {current_state_belief.shape}, expanded: {expanded_state.shape}\n"
+            debug_msg += f"EXPAND DEBUG: original hidden: {current_hidden.shape}, expanded: {expanded_hidden.shape}\n"
+            print(debug_msg)
+            with open('/home/patrick/Documents/PlaNet/cem_debug.txt', 'w') as f:
+                f.write(debug_msg)
+            self._expand_debug = True
+
         # Vectorized rollout for all candidates simultaneously
         return self._rollout_trajectory_vectorized(action_sequences, expanded_state, expanded_hidden)
 
@@ -185,6 +194,14 @@ class CEMPlanner:
                 actions_t = action_sequences[:, t, :].contiguous()  # [candidates, action_dim]
 
                 # Compute state-action embeddings for all candidates
+                # Debug: check exact tensor dimensions
+                if self._plan_call_count <= 1 and t == 0:
+                    print(f"        current_states.shape: {list(current_states.shape)}")
+                    print(f"        actions_t.shape: {list(actions_t.shape)}")
+                    for i, tensor in enumerate([current_states, actions_t]):
+                        for dim in range(tensor.dim()):
+                            print(f"        tensor[{i}].size({dim}) = {tensor.size(dim)}")
+
                 state_action_input = torch.cat([current_states, actions_t], dim=-1)
                 state_action_embeddings = self.rssm.state_action(state_action_input)  # [candidates, sa_dim]
 
