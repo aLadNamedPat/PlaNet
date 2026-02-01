@@ -337,30 +337,47 @@ class ExperienceBuffer:
             self.rewards = self.rewards[oldest_episode_len:]
 
     def get_random_sequences(self, batch_size, sequence_length):
-        """Sample random sequences of length L for training"""
+        """Sample sequences that don't cross episode boundaries"""
         if len(self.observations) < sequence_length:
             return None, None, None
-
+        
+        # Build list of valid (start_idx, end_idx) ranges for each episode
+        valid_starts = []
+        current_idx = 0
+        
+        for ep_len in self.episode_lengths:
+            if ep_len >= sequence_length:
+                # Can sample any start position where we have seq_len steps remaining
+                for start in range(current_idx, current_idx + ep_len - sequence_length + 1):
+                    valid_starts.append(start)
+            current_idx += ep_len
+        
+        if len(valid_starts) < batch_size:
+            # Not enough valid starting points - sample with replacement
+            if len(valid_starts) == 0:
+                return None, None, None
+            chosen_starts = random.choices(valid_starts, k=batch_size)
+        else:
+            chosen_starts = random.sample(valid_starts, batch_size)
+        
         obs_batch = []
         action_batch = []
         reward_batch = []
-
-        for _ in range(batch_size):
-            # Find valid start indices (ensuring we have enough steps)
-            valid_start = len(self.observations) - sequence_length
-            start_idx = random.randint(0, valid_start)
-
+        
+        for start_idx in chosen_starts:
             obs_seq = self.observations[start_idx:start_idx + sequence_length]
             action_seq = self.actions[start_idx:start_idx + sequence_length]
             reward_seq = self.rewards[start_idx:start_idx + sequence_length]
-
+            
             obs_batch.append(obs_seq)
             action_batch.append(action_seq)
             reward_batch.append(reward_seq)
-
-        return torch.stack([torch.stack(seq) for seq in obs_batch]), \
-               torch.stack([torch.stack(seq) for seq in action_batch]), \
-               torch.stack([torch.stack(seq) for seq in reward_batch])
+        
+        return (
+            torch.stack([torch.stack(seq) for seq in obs_batch]),
+            torch.stack([torch.stack(seq) for seq in action_batch]),
+            torch.stack([torch.stack(seq) for seq in reward_batch])
+        )
 
     def merge_buffer(self, other_buffer):
         """Merge another buffer into this one"""
