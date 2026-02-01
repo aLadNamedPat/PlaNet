@@ -4,7 +4,7 @@ from models.EncoderDecoder import Encoder, Decoder
 import torch.nn.functional as F
 
 class RSSM(nn.Module):
-    def __init__(self, action_size : int, sa_dim : int, latent_size : int, encoded_size : int, hidden_size : int, lstm_layers : int, device='cpu'):
+    def __init__(self, action_size : int, sa_dim : int, latent_size : int, encoded_size : int, hidden_size : int, lstm_layers : int, min_std_dev: float = 0.1, device='cpu'):
         super(RSSM, self).__init__()
         # latent size is going to be the dimension of the latent state (processed from the posterior and prior learned functions)
         # embed size is going to be the "encoded" observation dimensionality 
@@ -18,6 +18,8 @@ class RSSM(nn.Module):
         # decoder will "decode" from the posterior state estimate and the hidden state to image observation
         # this is largely used for reconstruction loss
         self.decoder = Decoder()
+
+        self.min_std_dev = min_std_dev
 
         # lstm is usde for predicting the next hidden state as the "deterministic" component of this setup
         # input should be composed of the previous hidden state, the previous state, and the previous action
@@ -40,7 +42,7 @@ class RSSM(nn.Module):
             nn.ReLU()
         )
         self.prior_mu = nn.Linear(200, latent_size)
-        self.prior_logvar = nn.Linear(200, latent_size)
+        self.prior_std = nn.Linear(200, latent_size)
 
         self.posterior = nn.Sequential(
             nn.Linear(hidden_size + encoded_size, 200),
@@ -49,7 +51,7 @@ class RSSM(nn.Module):
             nn.ReLU()
         )
         self.posterior_mu = nn.Linear(200, latent_size)
-        self.posterior_logvar = nn.Linear(200, latent_size)
+        self.posterior_std = nn.Linear(200, latent_size)
 
         self.reward = nn.Sequential(
             nn.Linear(latent_size + hidden_size, 200),
@@ -59,38 +61,39 @@ class RSSM(nn.Module):
             nn.Linear(200, 1)
         )
 
-    def reparameterize(self, mu, logvar, deterministic=False):
+    def reparameterize(self, mu, std, deterministic=False):
         if deterministic:
             return mu
-        std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
 
     def sample_prior(self, hidden_state, deterministic=False):
         prior_features = self.prior(hidden_state)
         prior_mu = self.prior_mu(prior_features)
-        prior_logvar = self.prior_logvar(prior_features)
-        prior_sample = self.reparameterize(prior_mu, prior_logvar, deterministic)
-        return prior_sample, prior_mu, prior_logvar
+        prior_std_raw = self.prior_std(prior_features)
+        
+        prior_std = F.softplus(prior_std_raw) + self.min_std_dev
+        
+        if deterministic:
+            return prior_mu, prior_mu, prior_std
+        
+        prior_sample = prior_mu + prior_std * torch.randn_like(prior_mu)
+        return prior_sample, prior_mu, prior_std
 
     def sample_posterior(self, hidden_state, encoded_obs, deterministic=False):
-        # Debug tensor shapes
-        if hasattr(self, '_debug_count') and self._debug_count < 3:
-            print(f"      DEBUG - Hidden state shape: {hidden_state.shape}")
-            print(f"      DEBUG - Encoded obs shape: {encoded_obs.shape}")
-            self._debug_count += 1
-        elif not hasattr(self, '_debug_count'):
-            self._debug_count = 1
-            print(f"      DEBUG - Hidden state shape: {hidden_state.shape}")
-            print(f"      DEBUG - Encoded obs shape: {encoded_obs.shape}")
-
         posterior_input = torch.cat([hidden_state, encoded_obs], dim=-1)
         posterior_features = self.posterior(posterior_input)
         posterior_mu = self.posterior_mu(posterior_features)
-        posterior_logvar = self.posterior_logvar(posterior_features)
-        posterior_sample = self.reparameterize(posterior_mu, posterior_logvar, deterministic)
-        return posterior_sample, posterior_mu, posterior_logvar
-
+        posterior_std_raw = self.posterior_std(posterior_features)
+        
+        posterior_std = F.softplus(posterior_std_raw) + self.min_std_dev
+        
+        if deterministic:
+            return posterior_mu, posterior_mu, posterior_std
+        
+        posterior_sample = posterior_mu + posterior_std * torch.randn_like(posterior_mu)
+        return posterior_sample, posterior_mu, posterior_std
+    
     def encode(self, obs):
         return self.encoder(obs)
 
@@ -130,9 +133,9 @@ class RSSM(nn.Module):
         hiddens_list = [prev_hidden]
 
         prior_mus = []
-        prior_logvars = []
+        prior_stds = []
         posterior_mus = []
-        posterior_logvars = []
+        posterior_stds = []
         rewards = []
         for t in range(T):
             # Again super thankful to https://medium.com/@lukasbierling/recurrent-state-space-models-pytorch-implementation-ba5d7e063d11 for guidance:
@@ -173,10 +176,10 @@ class RSSM(nn.Module):
 
             # Given this new hidden state, let's find the prior and posterior
             # We'll start with predicting the prior
-            prior_state_t, prior_mu_t, prior_logvar_t = self.sample_prior(hidden_t)
+            prior_state_t, prior_mu_t, prior_std_t = self.sample_prior(hidden_t)
 
             # We'll also predict the posterior given this new hidden state
-            posterior_state_t, posterior_mu_t, posterior_logvar_t = self.sample_posterior(hidden_t, encoded_obs_t)
+            posterior_state_t, posterior_mu_t, posterior_std_t = self.sample_posterior(hidden_t, encoded_obs_t)
 
             # Predict the reward for a given hidden and posterior state
             reward = self.reward(torch.cat([posterior_state_t, hidden_t], dim=-1))
@@ -184,19 +187,19 @@ class RSSM(nn.Module):
             # Store results
             prior_states_list.append(prior_state_t)
             prior_mus.append(prior_mu_t)
-            prior_logvars.append(prior_logvar_t)
+            prior_stds.append(prior_std_t)
 
             posterior_states_list.append(posterior_state_t)
             posterior_mus.append(posterior_mu_t)
-            posterior_logvars.append(posterior_logvar_t)
+            posterior_stds.append(posterior_std_t)
             rewards.append(reward)
 
         prior_states = torch.stack(prior_states_list[1:], dim=1)
         posterior_states = torch.stack(posterior_states_list[1:], dim=1)
         hiddens = torch.stack(hiddens_list[1:], dim=1)
         prior_mus = torch.stack(prior_mus, dim=1)
-        prior_logvars = torch.stack(prior_logvars, dim=1)
+        prior_stds = torch.stack(prior_stds, dim=1)
         posterior_mus = torch.stack(posterior_mus, dim=1)
-        posterior_logvars = torch.stack(posterior_logvars, dim=1)
+        posterior_stds = torch.stack(posterior_stds, dim=1)
         rewards = torch.stack(rewards, dim = 1)
-        return prior_states, posterior_states, hiddens, prior_mus, prior_logvars, posterior_mus, posterior_logvars, rewards
+        return prior_states, posterior_states, hiddens, prior_mus, prior_stds, posterior_mus, posterior_stds, rewards
