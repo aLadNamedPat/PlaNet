@@ -4,7 +4,7 @@ from models.EncoderDecoder import Encoder, Decoder
 import torch.nn.functional as F
 
 class RSSM(nn.Module):
-    def __init__(self, action_size : int, sa_dim : int, latent_size : int, encoded_size : int, hidden_size : int, lstm_layers : int, min_std_dev: float = 0.1, device='cpu'):
+    def __init__(self, action_size : int, latent_size : int, encoded_size : int, hidden_size : int, min_std_dev: float = 0.1, device='cpu'):
         super(RSSM, self).__init__()
         # latent size is going to be the dimension of the latent state (processed from the posterior and prior learned functions)
         # embed size is going to be the "encoded" observation dimensionality 
@@ -26,14 +26,8 @@ class RSSM(nn.Module):
         # since the action is going to be one-hot encoded, we can assume that we are going to embed the
         # action and the previous state together using some learned function. we'll call this the sa_dim
         # Only use dropout if num_layers > 1
-        dropout_rate = 0.1 if lstm_layers > 1 else 0.0
-        self.rnn = nn.GRU(sa_dim + hidden_size, hidden_size, lstm_layers, dropout=dropout_rate)
-
-        self.state_action = nn.Sequential(
-            nn.Linear(latent_size + action_size, 200),
-            nn.ReLU(),
-            nn.Linear(200, sa_dim)
-        )
+        self.fc_embed_state_action = nn.Linear(latent_size + action_size, hidden_size)
+        self.rnn = nn.GRUCell(hidden_size, hidden_size)
 
         self.prior = nn.Sequential(
             nn.Linear(hidden_size, 200),
@@ -60,12 +54,6 @@ class RSSM(nn.Module):
             nn.ReLU(),
             nn.Linear(200, 1)
         )
-
-    def reparameterize(self, mu, std, deterministic=False):
-        if deterministic:
-            return mu
-        eps = torch.randn_like(std)
-        return mu + eps * std
 
     def sample_prior(self, hidden_state, deterministic=False):
         prior_features = self.prior(hidden_state)
@@ -150,27 +138,11 @@ class RSSM(nn.Module):
             posterior_state_t = posterior_states_list[-1]
             hidden_t = hiddens_list[-1]
 
-            state_action_t = self.state_action(torch.cat([posterior_state_t, action_t], dim=-1))
-
             # Update hidden state using GRU
-            rnn_input = torch.cat([state_action_t, hidden_t], dim=-1).unsqueeze(1)  # Add seq dimension: [B, 1, features]
-            _, hidden_t_new = self.rnn(rnn_input)  # hidden_t_new: [num_layers, B, hidden_size]
-
-            # Properly squeeze to get [B, hidden_size]
-            if hidden_t_new.dim() == 3:  # [num_layers, B, hidden_size]
-                hidden_t = hidden_t_new.squeeze(0)  # Remove layer dimension: [B, hidden_size]
-            else:  # [B, hidden_size] already
-                hidden_t = hidden_t_new
-
-            # Ensure correct batch dimension - if we somehow get [1, hidden_size] instead of [B, hidden_size]
-            if hidden_t.shape[0] != B:
-                hidden_t = hidden_t.expand(B, -1)  # Broadcast to correct batch size
-
-            # Debug shapes during first few iterations
-            if hasattr(self, '_debug_count') and self._debug_count < 3:
-                print(f"        GRU output shape: {hidden_t_new.shape}")
-                print(f"        After processing: {hidden_t.shape}")
-                print(f"        Expected batch size: {B}")
+            embedded = F.relu(self.fc_embed_state_action(
+                torch.cat([posterior_state_t, action_t], dim=-1)
+            ))
+            hidden_t = self.rnn(embedded, hidden_t)  # Clean and simple
 
             hiddens_list.append(hidden_t)
 

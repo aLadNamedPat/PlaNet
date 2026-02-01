@@ -706,8 +706,6 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
     encoded_size = 1024
     latent_size = 30
     hidden_size = 200
-    sa_dim = 200
-    lstm_layers = 1
 
     wandb.init(
         project="planet-rssm-dmc-walker",
@@ -720,8 +718,6 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             "encoded_size": encoded_size,
             "latent_size": latent_size,
             "hidden_size": hidden_size,
-            "sa_dim": sa_dim,
-            "lstm_layers": lstm_layers,
             "obs_shape": obs_shape,
             "action_dim": action_dim,
             "plan_every": plan_every,
@@ -741,14 +737,12 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
     # Initialize RSSM
     rssm = RSSM(
         action_size=action_dim,
-        sa_dim=sa_dim,
         latent_size=latent_size,
         encoded_size=encoded_size,
         hidden_size=hidden_size,
-        lstm_layers=lstm_layers,
+        min_std_dev=0.1,
         device=device
     ).to(device)
-
     optimizer = optim.Adam(rssm.parameters(), lr=learning_rate)
 
     # Collect initial dataset
