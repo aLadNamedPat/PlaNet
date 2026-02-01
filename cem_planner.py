@@ -255,7 +255,9 @@ class PlaNetController:
             action_repeat: Number of times to repeat each planned action (R in paper)
         """
         self.rssm = rssm
-        self.planner = CEMPlanner(rssm, action_dim, horizon)
+        # Get device from rssm model
+        device = next(rssm.parameters()).device
+        self.planner = CEMPlanner(rssm, action_dim, horizon, device=device)
         self.action_repeat = action_repeat
 
         # State belief tracking

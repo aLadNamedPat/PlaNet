@@ -4,7 +4,7 @@ from models.EncoderDecoder import Encoder, Decoder
 import torch.nn.functional as F
 
 class RSSM(nn.Module):
-    def __init__(self, action_size : int, sa_dim : int, latent_size : int, encoded_size : int, hidden_size : int, lstm_layers : int):
+    def __init__(self, action_size : int, sa_dim : int, latent_size : int, encoded_size : int, hidden_size : int, lstm_layers : int, device='cpu'):
         super(RSSM, self).__init__()
         # latent size is going to be the dimension of the latent state (processed from the posterior and prior learned functions)
         # embed size is going to be the "encoded" observation dimensionality 

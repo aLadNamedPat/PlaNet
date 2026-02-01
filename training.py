@@ -703,6 +703,13 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         }
     )
 
+    # Setup device (GPU if available, CPU otherwise)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"🔧 Using device: {device}")
+    if torch.cuda.is_available():
+        print(f"   GPU: {torch.cuda.get_device_name(0)}")
+        print(f"   CUDA Version: {torch.version.cuda}")
+
     # Initialize RSSM
     rssm = RSSM(
         action_size=action_dim,
@@ -710,8 +717,9 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         latent_size=latent_size,
         encoded_size=encoded_size,
         hidden_size=hidden_size,
-        lstm_layers=lstm_layers
-    )
+        lstm_layers=lstm_layers,
+        device=device
+    ).to(device)
 
     optimizer = optim.Adam(rssm.parameters(), lr=learning_rate)
 
@@ -736,6 +744,10 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
     print(f"{'='*60}")
 
     # Training loop
+    best_eval_return = float('-inf')
+    checkpoint_dir = 'checkpoints'
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
     for epoch in range(num_epochs):
         if epoch % 10 == 0:
             print(f"\n🔄 Starting epoch {epoch}/{num_epochs}...")
@@ -746,6 +758,11 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         if obs_batch is None:
             print("Not enough data for training batch, skipping...")
             continue
+
+        # Move data to device
+        obs_batch = obs_batch.to(device)
+        action_batch = action_batch.to(device)
+        reward_batch = reward_batch.to(device)
 
         # Debug tensor shapes
         if epoch % 10 == 0:
@@ -776,8 +793,8 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             print(f"   Encoded observation shape: [batch_size, seq_len, encoded_dim] = {encoded_obs.shape}")
 
         # Initialize states
-        prev_state = torch.zeros(batch_size, latent_size)
-        prev_hidden = torch.zeros(batch_size, hidden_size)
+        prev_state = torch.zeros(batch_size, latent_size, device=device)
+        prev_hidden = torch.zeros(batch_size, hidden_size, device=device)
 
         rssm_output = rssm.pass_through(prev_state, prev_hidden, encoded_obs, action_batch)
         prior_states, posterior_states, hiddens, _, _, _, _, predicted_rewards = rssm_output
@@ -832,6 +849,33 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
                 "eval_epoch": epoch
             })
 
+            # Save checkpoint if this is the best performance so far
+            if avg_return > best_eval_return:
+                best_eval_return = avg_return
+                best_checkpoint_path = os.path.join(checkpoint_dir, 'best_model.pth')
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': rssm.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'best_eval_return': best_eval_return,
+                    'avg_return': avg_return,
+                    'episode_returns': episode_returns
+                }, best_checkpoint_path)
+                print(f"🎯 New best model saved! Return: {avg_return:.2f}")
+
+            # Save periodic checkpoint
+            if epoch % (evaluate_every * 2) == 0:  # Every 2nd evaluation
+                periodic_checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch}.pth')
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': rssm.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'best_eval_return': best_eval_return,
+                    'avg_return': avg_return,
+                    'episode_returns': episode_returns
+                }, periodic_checkpoint_path)
+                print(f"📁 Periodic checkpoint saved: epoch_{epoch}.pth")
+
             rssm.train()  # Back to training mode
             print("=== Evaluation Complete ===\n")
 
@@ -875,12 +919,12 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
 if __name__ == "__main__":
     # Train the model with CEM evaluation and planning
     trained_rssm = train_rssm(
-        S=5, B=50, L=50,
+        S=1, B=50, L=50,
         num_epochs= 50000,
         evaluate_every=50,
         evaluation_episodes=1,
         plan_every=100,  # CEM planning every 25 epochs
-        planning_episodes=10,  # Collect 3 episodes per planning phase
+        planning_episodes=1,
         action_repeat=2  # Action repeat parameter R
     )
 
