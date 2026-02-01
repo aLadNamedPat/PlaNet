@@ -465,30 +465,29 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
     return buffer
 
 def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards, free_nats=3.0):
-    """Compute RSSM training losses with free nats"""
     prior_states, posterior_states, hiddens, prior_mus, prior_logvars, posterior_mus, posterior_logvars, rewards = rssm_output
 
-    # Reconstruction loss
     reconstruction_loss = nn.MSELoss()(reconstructed_obs, target_obs)
-
-    # Reward prediction loss
     reward_loss = nn.MSELoss()(predicted_rewards.squeeze(-1), target_rewards)
 
-    # KL divergence with free nats (matching reference implementation)
     prior_std = torch.exp(0.5 * prior_logvars)
     posterior_std = torch.exp(0.5 * posterior_logvars)
     
     prior_dist = Normal(prior_mus, prior_std)
     posterior_dist = Normal(posterior_mus, posterior_std)
     
-    # Sum over latent dimension -> [batch, seq_len]
     kl_per_timestep = kl_divergence(posterior_dist, prior_dist).sum(dim=-1)
     
-    # Apply free nats per timestep
+    # DEBUG: Print actual KL values
+    print(f"    DEBUG - Raw KL min: {kl_per_timestep.min().item():.4f}, max: {kl_per_timestep.max().item():.4f}, mean: {kl_per_timestep.mean().item():.4f}")
+    print(f"    DEBUG - Posterior mu range: [{posterior_mus.min().item():.4f}, {posterior_mus.max().item():.4f}]")
+    print(f"    DEBUG - Prior mu range: [{prior_mus.min().item():.4f}, {prior_mus.max().item():.4f}]")
+    print(f"    DEBUG - Posterior std range: [{posterior_std.min().item():.4f}, {posterior_std.max().item():.4f}]")
+    print(f"    DEBUG - Prior std range: [{prior_std.min().item():.4f}, {prior_std.max().item():.4f}]")
+    
     free_nats_tensor = torch.tensor(free_nats, device=kl_per_timestep.device)
     kl_with_free_nats = torch.max(kl_per_timestep, free_nats_tensor)
     
-    # Average over batch and time
     kl_loss = kl_with_free_nats.mean()
 
     return reconstruction_loss, reward_loss, kl_loss
