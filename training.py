@@ -464,20 +464,22 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
 
     return buffer
 
-def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards):
-    """Compute RSSM training losses"""
-    # Unpack RSSM outputs
+def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards, free_nats=3.0, kl_scale=1.0):
+    """Compute RSSM training losses with free nats"""
     prior_states, posterior_states, hiddens, prior_mus, prior_logvars, posterior_mus, posterior_logvars, rewards = rssm_output
 
-    # Reconstruction loss
     reconstruction_loss = nn.MSELoss()(reconstructed_obs, target_obs)
-
-    # Reward prediction loss (MSE with assumed variance of 1)
     reward_loss = nn.MSELoss()(predicted_rewards.squeeze(-1), target_rewards)
 
     prior_dist = Normal(prior_mus, torch.exp(0.5 * prior_logvars))
     posterior_dist = Normal(posterior_mus, torch.exp(0.5 * posterior_logvars))
-    kl_loss = kl_divergence(posterior_dist, prior_dist).sum(dim=-1).mean()
+    
+    # KL divergence with free nats (prevents KL collapse)
+    kl_raw = kl_divergence(posterior_dist, prior_dist).sum(dim=-1)  # [batch, seq_len]
+    kl_loss = torch.max(kl_raw, torch.tensor(free_nats, device=kl_raw.device)).mean()
+    
+    # Scale KL loss
+    kl_loss = kl_scale * kl_loss
 
     return reconstruction_loss, reward_loss, kl_loss
 
@@ -806,12 +808,15 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         reconstructed_obs = torch.stack(reconstructed, dim=1)
 
         reconstruction_loss, reward_loss, kl_loss = compute_losses(
-            rssm_output, reconstructed_obs, obs_batch, predicted_rewards, reward_batch
+            rssm_output, reconstructed_obs, obs_batch, predicted_rewards, reward_batch,
+            free_nats=3.0,  # Paper uses 3.0
+            kl_scale=1.0    # Can adjust if needed
         )
 
         total_loss = reconstruction_loss + reward_loss + kl_loss
 
         total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(rssm.parameters(), max_norm=1000.0)  # Paper uses 1000
         optimizer.step()
 
         wandb.log({
