@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 import numpy as np
 import gymnasium as gym
 import os
@@ -485,7 +486,7 @@ def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards
     """Compute RSSM training losses with free nats"""
     prior_states, posterior_states, hiddens, prior_mus, prior_stds, posterior_mus, posterior_stds, rewards = rssm_output
     
-    reconstruction_loss = torch.F.mse_loss(reconstructed_obs, target_obs, reduction='none')
+    reconstruction_loss = F.mse_loss(reconstructed_obs, target_obs, reduction='none')
     reconstruction_loss = reconstruction_loss.sum(dim=(2, 3, 4)).mean()  # Sum over C,H,W, mean over B,T
     reward_loss = nn.MSELoss()(predicted_rewards.squeeze(-1), target_rewards)
     
