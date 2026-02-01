@@ -165,13 +165,16 @@ class CEMPlanner:
                 actions_t = action_sequences[:, t, :]  # [candidates, action_dim]
 
                 state_action_input = torch.cat([current_states, actions_t], dim=-1)
-                state_action_embeddings = self.rssm.state_action(state_action_input)
+                state_action_embeddings = self.rssm.state_action(state_action_input)  # [candidates, sa_dim]
 
-                # RNN expects input: [batch, seq_len, features]
-                # RNN hidden input: [num_layers, batch, hidden_size]
-                rnn_inputs = torch.cat([state_action_embeddings, current_hiddens], dim=-1).unsqueeze(1)
+                # Match RSSM pass_through: concatenate state_action with hidden
+                rnn_input_features = torch.cat([state_action_embeddings, current_hiddens], dim=-1)  # [candidates, sa_dim + hidden_size]
                 
-                # Hidden state needs to be [num_layers, batch, hidden_size] for RNN input
+                # GRU with batch_first=False expects: [seq_len, batch, features]
+                # Use seq_len=1, batch=candidates
+                rnn_inputs = rnn_input_features.unsqueeze(0)  # [1, candidates, features]
+                
+                # Hidden state: [num_layers, batch, hidden_size]
                 hidden_for_rnn = current_hiddens.unsqueeze(0)  # [1, candidates, hidden_size]
                 
                 _, new_hidden = self.rssm.rnn(rnn_inputs, hidden_for_rnn)
