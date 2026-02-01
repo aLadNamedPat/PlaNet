@@ -922,7 +922,7 @@ if __name__ == "__main__":
         num_epochs= 50000,
         evaluate_every=500,
         evaluation_episodes=1,
-        plan_every=5,  # CEM planning every 25 epochs
+        plan_every=100,  # CEM planning every 25 epochs
         planning_episodes=1,
         action_repeat=2  # Action repeat parameter R
     )
