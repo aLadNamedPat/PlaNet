@@ -483,22 +483,18 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
 
 def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards, free_nats=3.0, debug=False):
     """Compute RSSM training losses with free nats"""
-    # Now receiving std directly, not logvar
     prior_states, posterior_states, hiddens, prior_mus, prior_stds, posterior_mus, posterior_stds, rewards = rssm_output
-
-    reconstruction_loss = nn.MSELoss()(reconstructed_obs, target_obs)
+    
+    reconstruction_loss = torch.F.mse_loss(reconstructed_obs, target_obs, reduction='none')
+    reconstruction_loss = reconstruction_loss.sum(dim=(2, 3, 4)).mean()  # Sum over C,H,W, mean over B,T
     reward_loss = nn.MSELoss()(predicted_rewards.squeeze(-1), target_rewards)
-
-    # Use std directly (no conversion needed)
+    
     prior_dist = Normal(prior_mus, prior_stds)
     posterior_dist = Normal(posterior_mus, posterior_stds)
-    
     kl_per_timestep = kl_divergence(posterior_dist, prior_dist).sum(dim=-1)
     
-    # Compute RAW KL before clamping
     raw_kl = kl_per_timestep.mean()
     
-    # Debug logging (only occasionally to avoid spam)
     if debug:
         print(f"    DEBUG - RAW KL (before free nats): {raw_kl.item():.4f}")
         print(f"    DEBUG - KL min: {kl_per_timestep.min().item():.4f}, max: {kl_per_timestep.max().item():.4f}")
@@ -507,11 +503,11 @@ def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards
         print(f"    DEBUG - Posterior std range: [{posterior_stds.min().item():.4f}, {posterior_stds.max().item():.4f}]")
         print(f"    DEBUG - Prior std range: [{prior_stds.min().item():.4f}, {prior_stds.max().item():.4f}]")
     
+    # FIXED: Only penalize KL ABOVE free_nats threshold
     free_nats_tensor = torch.tensor(free_nats, device=kl_per_timestep.device)
-    kl_with_free_nats = torch.max(kl_per_timestep, free_nats_tensor)
+    kl_clipped = torch.clamp(kl_per_timestep - free_nats_tensor, min=0.0)
+    kl_loss = kl_clipped.mean()
     
-    kl_loss = kl_with_free_nats.mean()
-
     return reconstruction_loss, reward_loss, kl_loss, raw_kl
 
 def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
@@ -744,7 +740,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         min_std_dev=0.1,
         device=device
     ).to(device)
-    optimizer = optim.Adam(rssm.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(rssm.parameters(), lr=learning_rate, eps=1e-4)
 
     # Collect initial dataset
     dataset = collect_random_episodes(env, S)
