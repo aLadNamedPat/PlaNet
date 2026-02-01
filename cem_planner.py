@@ -191,7 +191,7 @@ class CEMPlanner:
                 # Update hidden states for all candidates
                 rnn_inputs = torch.cat([state_action_embeddings, current_hiddens], dim=-1).unsqueeze(1)  # [candidates, 1, features]
                 _, current_hiddens = self.rssm.rnn(rnn_inputs)
-                current_hiddens = current_hiddens.squeeze(0)  # [candidates, hidden_size]
+                current_hiddens = current_hiddens.squeeze(1)  # [candidates, hidden_size]
 
                 # Sample from prior for all candidates (deterministic for planning)
                 current_states, _, _ = self.rssm.sample_prior(current_hiddens, deterministic=True)
