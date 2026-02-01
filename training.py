@@ -464,22 +464,32 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
 
     return buffer
 
-def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards, free_nats=3.0, kl_scale=1.0):
+def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards, free_nats=3.0):
     """Compute RSSM training losses with free nats"""
     prior_states, posterior_states, hiddens, prior_mus, prior_logvars, posterior_mus, posterior_logvars, rewards = rssm_output
 
+    # Reconstruction loss
     reconstruction_loss = nn.MSELoss()(reconstructed_obs, target_obs)
+
+    # Reward prediction loss
     reward_loss = nn.MSELoss()(predicted_rewards.squeeze(-1), target_rewards)
 
-    prior_dist = Normal(prior_mus, torch.exp(0.5 * prior_logvars))
-    posterior_dist = Normal(posterior_mus, torch.exp(0.5 * posterior_logvars))
+    # KL divergence with free nats (matching reference implementation)
+    prior_std = torch.exp(0.5 * prior_logvars)
+    posterior_std = torch.exp(0.5 * posterior_logvars)
     
-    # KL divergence with free nats (prevents KL collapse)
-    kl_raw = kl_divergence(posterior_dist, prior_dist).sum(dim=-1)  # [batch, seq_len]
-    kl_loss = torch.max(kl_raw, torch.tensor(free_nats, device=kl_raw.device)).mean()
+    prior_dist = Normal(prior_mus, prior_std)
+    posterior_dist = Normal(posterior_mus, posterior_std)
     
-    # Scale KL loss
-    kl_loss = kl_scale * kl_loss
+    # Sum over latent dimension -> [batch, seq_len]
+    kl_per_timestep = kl_divergence(posterior_dist, prior_dist).sum(dim=-1)
+    
+    # Apply free nats per timestep
+    free_nats_tensor = torch.tensor(free_nats, device=kl_per_timestep.device)
+    kl_with_free_nats = torch.max(kl_per_timestep, free_nats_tensor)
+    
+    # Average over batch and time
+    kl_loss = kl_with_free_nats.mean()
 
     return reconstruction_loss, reward_loss, kl_loss
 
@@ -809,8 +819,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
 
         reconstruction_loss, reward_loss, kl_loss = compute_losses(
             rssm_output, reconstructed_obs, obs_batch, predicted_rewards, reward_batch,
-            free_nats=3.0,  # Paper uses 3.0
-            kl_scale=1.0    # Can adjust if needed
+            free_nats=3.0
         )
 
         total_loss = reconstruction_loss + reward_loss + kl_loss
