@@ -535,7 +535,7 @@ def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
 
     return avg_return, episode_returns
 
-def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repeat=2):
+def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repeat=2, exploration_noise=0.3):
     """
     Collect episodes using CEM planning for dataset augmentation
 
@@ -592,10 +592,9 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
             import time
             start_time = time.time()
             action = controller.act(obs_tensor)
-            planning_time = time.time() - start_time
-
-            if step % 10 == 0:  # Report planning time every 10 steps
-                print(f"    ⏱️  CEM planning took {planning_time:.2f}s")
+            noise = np.random.normal(0, exploration_noise, size=action.shape)
+            action = action + noise
+            action = np.clip(action, -1.0, 1.0)  # Clip to valid range
 
             action_tensor = torch.tensor(action, dtype=torch.float32)
             action_sequence.append(action_tensor)
