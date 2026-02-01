@@ -336,7 +336,9 @@ class PlaNetController:
     def update_state(self, action):
         """Update internal state belief after taking action"""
         with torch.no_grad():
-            action_tensor = torch.tensor(action, dtype=torch.float32).unsqueeze(0)
+            # Move action tensor to same device as state belief
+            device = self.current_state_belief.device
+            action_tensor = torch.tensor(action, dtype=torch.float32, device=device).unsqueeze(0)
 
             # Update hidden state using model dynamics
             state_action_embedding = self.rssm.state_action(
