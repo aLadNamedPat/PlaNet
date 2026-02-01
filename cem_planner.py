@@ -113,8 +113,9 @@ class CEMPlanner:
 
         # Vectorized evaluation: evaluate all candidates at once
         # Expand states to [candidates, latent_size] and [candidates, hidden_size]
-        expanded_state = current_state_belief.expand(candidates, -1)
-        expanded_hidden = current_hidden.expand(candidates, -1)
+        # Use repeat instead of expand to ensure proper tensor copies
+        expanded_state = current_state_belief.repeat(candidates, 1)
+        expanded_hidden = current_hidden.repeat(candidates, 1)
 
         # Vectorized rollout for all candidates simultaneously
         return self._rollout_trajectory_vectorized(action_sequences, expanded_state, expanded_hidden)
@@ -188,6 +189,11 @@ class CEMPlanner:
                     print(f"        DEBUG t={t}: current_states.shape={current_states.shape}, actions_t.shape={actions_t.shape}")
 
                 # Compute state-action embeddings for all candidates
+                # Extra debug right before concatenation
+                if self._plan_call_count <= 1 and t == 0:
+                    print(f"        CONCAT DEBUG: About to concat current_states{current_states.shape} + actions_t{actions_t.shape}")
+                    print(f"        CONCAT DEBUG: current_states.is_contiguous()={current_states.is_contiguous()}, actions_t.is_contiguous()={actions_t.is_contiguous()}")
+
                 state_action_input = torch.cat([current_states, actions_t], dim=-1)
                 state_action_embeddings = self.rssm.state_action(state_action_input)  # [candidates, sa_dim]
 
