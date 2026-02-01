@@ -71,7 +71,7 @@ def load_rssm(checkpoint_path, device='cpu'):
         device=device
     ).to(device)
     
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     rssm.load_state_dict(checkpoint['model_state_dict'])
     rssm.eval()
     
