@@ -3,9 +3,9 @@ import torch.nn as nn
 import numpy as np
 
 class CEMPlanner:
-    """Cross-Entropy Method planner for PlaNet"""
+    """Cross-Entropy Method planner for PlaNet - Ultra-Fast Version"""
 
-    def __init__(self, rssm, action_dim, horizon=12, iterations=10, candidates=1000, top_k=100, device='cpu'):
+    def __init__(self, rssm, action_dim, horizon=3, iterations=2, candidates=20, top_k=5, device='cpu'):
         """
         Initialize CEM planner
 
@@ -98,7 +98,7 @@ class CEMPlanner:
 
     def _evaluate_sequences(self, action_sequences, current_state_belief, current_hidden):
         """
-        Evaluate action sequences under the learned model
+        Evaluate action sequences under the learned model - VECTORIZED
 
         Args:
             action_sequences: [candidates, horizon, action_dim]
@@ -111,27 +111,13 @@ class CEMPlanner:
         candidates = action_sequences.shape[0]
         batch_size = current_state_belief.shape[0]
 
-        # Expand state belief and hidden state for all candidates
-        # We'll evaluate each candidate independently (single trajectory per sequence)
-        expanded_state = current_state_belief.unsqueeze(0).expand(candidates, -1, -1).reshape(-1, current_state_belief.shape[-1])
-        expanded_hidden = current_hidden.unsqueeze(0).expand(candidates, -1, -1).reshape(-1, current_hidden.shape[-1])
+        # Vectorized evaluation: evaluate all candidates at once
+        # Expand states to [candidates, latent_size] and [candidates, hidden_size]
+        expanded_state = current_state_belief.expand(candidates, -1)
+        expanded_hidden = current_hidden.expand(candidates, -1)
 
-        # Flatten action sequences for batch processing
-        flat_actions = action_sequences.reshape(-1, self.horizon, self.action_dim)
-
-        returns = []
-
-        for i in range(candidates):
-            # Get action sequence for this candidate
-            candidate_actions = flat_actions[i:i+1]  # [1, horizon, action_dim]
-            candidate_state = expanded_state[i*batch_size:(i+1)*batch_size]  # [batch_size, latent_size]
-            candidate_hidden = expanded_hidden[i*batch_size:(i+1)*batch_size]  # [batch_size, hidden_size]
-
-            # Rollout trajectory using the model (prior only for planning)
-            trajectory_return = self._rollout_trajectory(candidate_actions, candidate_state, candidate_hidden)
-            returns.append(trajectory_return)
-
-        return torch.stack(returns)
+        # Vectorized rollout for all candidates simultaneously
+        return self._rollout_trajectory_vectorized(action_sequences, expanded_state, expanded_hidden)
 
     def _rollout_trajectory(self, action_sequence, initial_state, initial_hidden):
         """
@@ -174,6 +160,50 @@ class CEMPlanner:
                 total_return += predicted_reward.mean()  # Average over batch dimension
 
         return total_return
+
+    def _rollout_trajectory_vectorized(self, action_sequences, initial_states, initial_hiddens):
+        """
+        Vectorized rollout for multiple trajectories simultaneously
+
+        Args:
+            action_sequences: [candidates, horizon, action_dim]
+            initial_states: [candidates, latent_size]
+            initial_hiddens: [candidates, hidden_size]
+
+        Returns:
+            total_returns: [candidates] - returns for each sequence
+        """
+        candidates = action_sequences.shape[0]
+        current_states = initial_states  # [candidates, latent_size]
+        current_hiddens = initial_hiddens  # [candidates, hidden_size]
+        total_returns = torch.zeros(candidates, device=self.device)
+
+        with torch.no_grad():
+            for t in range(self.horizon):
+                # Get actions for all candidates at timestep t
+                actions_t = action_sequences[:, t, :]  # [candidates, action_dim]
+
+                # Compute state-action embeddings for all candidates
+                state_action_embeddings = self.rssm.state_action(
+                    torch.cat([current_states, actions_t], dim=-1)
+                )  # [candidates, sa_dim]
+
+                # Update hidden states for all candidates
+                rnn_inputs = torch.cat([state_action_embeddings, current_hiddens], dim=-1).unsqueeze(1)  # [candidates, 1, features]
+                _, current_hiddens = self.rssm.rnn(rnn_inputs)
+                current_hiddens = current_hiddens.squeeze(0)  # [candidates, hidden_size]
+
+                # Sample from prior for all candidates (deterministic for planning)
+                current_states, _, _ = self.rssm.sample_prior(current_hiddens, deterministic=True)
+
+                # Predict rewards for all candidates
+                predicted_rewards = self.rssm.reward(
+                    torch.cat([current_states, current_hiddens], dim=-1)
+                ).squeeze(-1)  # [candidates]
+
+                total_returns += predicted_rewards
+
+        return total_returns
 
     def _refit_belief(self, top_k_sequences):
         """

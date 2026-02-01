@@ -495,7 +495,7 @@ def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
         avg_return: Average return over episodes
     """
     action_dim = env.action_space.shape[0]
-    controller = PlaNetController(rssm, action_dim, horizon=12, action_repeat=2)
+    controller = PlaNetController(rssm, action_dim, horizon=4, action_repeat=2)
 
     episode_returns = []
 
@@ -548,7 +548,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
         ExperienceBuffer with CEM-generated data
     """
     action_dim = env.action_space.shape[0]
-    controller = PlaNetController(rssm, action_dim, horizon=12, action_repeat=action_repeat)
+    controller = PlaNetController(rssm, action_dim, horizon=4, action_repeat=action_repeat)
 
     buffer = ExperienceBuffer()
 
@@ -873,7 +873,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
 if __name__ == "__main__":
     # Train the model with CEM evaluation and planning
     trained_rssm = train_rssm(
-        S=10, B=50, L=50,
+        S=20, B=50, L=50,
         num_epochs= 100,
         evaluate_every=50,
         evaluation_episodes=3,
