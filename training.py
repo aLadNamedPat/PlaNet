@@ -495,9 +495,13 @@ def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards
     
     kl_per_timestep = kl_divergence(posterior_dist, prior_dist).sum(dim=-1)
     
+    # Compute RAW KL before clamping
+    raw_kl = kl_per_timestep.mean()
+    
     # Debug logging (only occasionally to avoid spam)
     if debug:
-        print(f"    DEBUG - Raw KL min: {kl_per_timestep.min().item():.4f}, max: {kl_per_timestep.max().item():.4f}, mean: {kl_per_timestep.mean().item():.4f}")
+        print(f"    DEBUG - RAW KL (before free nats): {raw_kl.item():.4f}")
+        print(f"    DEBUG - KL min: {kl_per_timestep.min().item():.4f}, max: {kl_per_timestep.max().item():.4f}")
         print(f"    DEBUG - Posterior mu range: [{posterior_mus.min().item():.4f}, {posterior_mus.max().item():.4f}]")
         print(f"    DEBUG - Prior mu range: [{prior_mus.min().item():.4f}, {prior_mus.max().item():.4f}]")
         print(f"    DEBUG - Posterior std range: [{posterior_stds.min().item():.4f}, {posterior_stds.max().item():.4f}]")
@@ -508,7 +512,7 @@ def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards
     
     kl_loss = kl_with_free_nats.mean()
 
-    return reconstruction_loss, reward_loss, kl_loss
+    return reconstruction_loss, reward_loss, kl_loss, raw_kl
 
 def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
     """
@@ -828,7 +832,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
 
         reconstructed_obs = torch.stack(reconstructed, dim=1)
 
-        reconstruction_loss, reward_loss, kl_loss = compute_losses(
+        reconstruction_loss, reward_loss, kl_loss, raw_kl = compute_losses(
             rssm_output, 
             reconstructed_obs, 
             obs_targets,
@@ -837,7 +841,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             free_nats=3.0,
             debug=(epoch % 100 == 0)
         )
-        
+
         total_loss = reconstruction_loss + reward_loss + kl_loss
 
         total_loss.backward()
@@ -850,9 +854,10 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             "reconstruction_loss": reconstruction_loss.item(),
             "reward_loss": reward_loss.item(),
             "kl_loss": kl_loss.item(),
+            "raw_kl": raw_kl.item(),  # Add this line
             "learning_rate": learning_rate
         })
-
+        
         if epoch % 10 == 0:
             print(f"📈 Epoch {epoch}: Total Loss: {total_loss.item():.4f}, "
                   f"Reconstruction: {reconstruction_loss.item():.4f}, "
