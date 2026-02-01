@@ -41,7 +41,7 @@ class Decoder(nn.Module):
         # No padding to match PlaNet: 2 -> 6 -> 14 -> 31 -> 64
         self.deconv1 = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, kernel_size=4, stride=2)
         self.deconv2 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, kernel_size=4, stride=2)
-        self.deconv3 = nn.ConvTranspose2d(base_channels * 2, base_channels, kernel_size=4, stride=2)
+        self.deconv3 = nn.ConvTranspose2d(base_channels * 2, base_channels, kernel_size=4, stride=2, output_padding=1)
         self.deconv4 = nn.ConvTranspose2d(base_channels, output_channels, kernel_size=4, stride=2)
 
     def forward(self, z):
