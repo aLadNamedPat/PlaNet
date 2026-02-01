@@ -280,7 +280,7 @@ def diagnose_rssm(checkpoint_path, device='cpu'):
         plt.suptitle(f'RSSM Reconstruction Test (Real Walker Obs)\n{os.path.basename(checkpoint_path)}')
         plt.tight_layout()
         
-        output_path = '/home/claude/rssm_diagnostic.png'
+        output_path = 'rssm_diagnostic.png'
         plt.savefig(output_path, dpi=150)
         print(f"Saved visualization to: {output_path}")
         
