@@ -186,18 +186,10 @@ class CEMPlanner:
                 # Debug: print shapes before concatenation
                 if self._plan_call_count <= 1 and t == 0:
                     print(f"        DEBUG t={t}: current_states.shape={current_states.shape}, actions_t.shape={actions_t.shape}")
-                    print(f"        DEBUG t={t}: current_states.dim()={current_states.dim()}, actions_t.dim()={actions_t.dim()}")
-                    # Try the concatenation in a try-except to see exactly where it fails
-                    try:
-                        test_cat = torch.cat([current_states, actions_t], dim=-1)
-                        print(f"        DEBUG t={t}: concatenation successful, result shape={test_cat.shape}")
-                    except Exception as e:
-                        print(f"        DEBUG t={t}: concatenation failed: {e}")
 
                 # Compute state-action embeddings for all candidates
-                state_action_embeddings = self.rssm.state_action(
-                    torch.cat([current_states, actions_t], dim=-1)
-                )  # [candidates, sa_dim]
+                state_action_input = torch.cat([current_states, actions_t], dim=-1)
+                state_action_embeddings = self.rssm.state_action(state_action_input)  # [candidates, sa_dim]
 
                 # Update hidden states for all candidates
                 rnn_inputs = torch.cat([state_action_embeddings, current_hiddens], dim=-1).unsqueeze(1)  # [candidates, 1, features]
