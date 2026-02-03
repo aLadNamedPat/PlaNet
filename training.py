@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 import gymnasium as gym
 import os
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 # Initialize environment setup for DMC BEFORE any dm_control imports
 def initialize_dmc_environment():
@@ -742,6 +743,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         device=device
     ).to(device)
     optimizer = optim.Adam(rssm.parameters(), lr=learning_rate, eps=1e-4)
+    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-5)
 
     # Collect initial dataset
     dataset = collect_random_episodes(env, S)
@@ -844,6 +846,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(rssm.parameters(), max_norm=1000.0)  # Paper uses 1000
         optimizer.step()
+        scheduler.step()
 
         wandb.log({
             "epoch": epoch,
@@ -852,7 +855,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             "reward_loss": reward_loss.item(),
             "kl_loss": kl_loss.item(),
             "raw_kl": raw_kl.item(),  # Add this line
-            "learning_rate": learning_rate
+            "learning_rate": scheduler.get_last_lr()[0]
         })
 
         if epoch % 10 == 0:

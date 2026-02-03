@@ -36,8 +36,9 @@ class Decoder(nn.Module):
         
         # Input is latent_dim (stochastic state) + hidden_dim (deterministic state)
         # latent_dim=30 (posterior/prior state), hidden_dim=200 (GRU hidden state)
-        self.fc = nn.Linear(latent_dim + hidden_dim, base_channels * 8 * 2 * 2)  # -> 1024
-        
+        self.fc1 = nn.Linear(latent_dim + hidden_dim, 512)
+        self.fc2 = nn.Linear(512, base_channels * 8 * 2 * 2)
+
         # No padding to match PlaNet: 2 -> 6 -> 14 -> 31 -> 64
         self.deconv1 = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, kernel_size=4, stride=2)
         self.deconv2 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, kernel_size=4, stride=2)
@@ -45,7 +46,8 @@ class Decoder(nn.Module):
         self.deconv4 = nn.ConvTranspose2d(base_channels, output_channels, kernel_size=4, stride=2)
 
     def forward(self, z):
-        x = F.relu(self.fc(z))
+        x = F.relu(self.fc1(z))
+        x = F.relu(self.fc2(x))
         x = x.view(x.size(0), self.base_channels * 8, 2, 2)
         x = F.relu(self.deconv1(x))
         x = F.relu(self.deconv2(x))
