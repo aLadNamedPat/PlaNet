@@ -45,7 +45,7 @@ class Decoder(nn.Module):
         self.deconv4 = nn.ConvTranspose2d(base_channels, output_channels, kernel_size=4, stride=2)
 
     def forward(self, z):
-        x = self.fc(z)
+        x = F.relu(self.fc(z))
         x = x.view(x.size(0), self.base_channels * 8, 2, 2)
         x = F.relu(self.deconv1(x))
         x = F.relu(self.deconv2(x))
