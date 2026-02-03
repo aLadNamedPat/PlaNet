@@ -525,7 +525,7 @@ def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
         avg_return: Average return over episodes
     """
     action_dim = env.action_space.shape[0]
-    controller = PlaNetController(rssm, action_dim, horizon=8, action_repeat=2)
+    controller = PlaNetController(rssm, action_dim, horizon=12, action_repeat=2)
 
     episode_returns = []
 
@@ -580,7 +580,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
         ExperienceBuffer with CEM-generated data
     """
     action_dim = env.action_space.shape[0]
-    controller = PlaNetController(rssm, action_dim, horizon=8, action_repeat=action_repeat)
+    controller = PlaNetController(rssm, action_dim, horizon=12, action_repeat=action_repeat)
 
     buffer = ExperienceBuffer()
 
@@ -589,7 +589,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
     print(f"Target episodes: {num_episodes}")
     print(f"Max steps per episode: {max_steps}")
     print(f"Action repeat (R): {action_repeat}")
-    print(f"Planning horizon: 8")
+    print(f"Planning horizon: 12")
     print(f"{'='*60}")
 
     total_steps = 0
@@ -835,11 +835,11 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
             obs_targets,
             predicted_rewards, 
             reward_batch_aligned,
-            free_nats=1.0,
+            free_nats=3.0,
             debug=(epoch % 50 == 0)
         )
 
-        total_loss = reconstruction_loss + reward_loss + kl_loss
+        total_loss = reconstruction_loss + 10 * reward_loss + kl_loss
 
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(rssm.parameters(), max_norm=1000.0)  # Paper uses 1000
