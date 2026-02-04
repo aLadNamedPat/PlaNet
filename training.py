@@ -486,11 +486,14 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
 def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards, free_nats=3.0, debug=False):
     """Compute RSSM training losses with free nats"""
     prior_states, posterior_states, hiddens, prior_mus, prior_stds, posterior_mus, posterior_stds, rewards = rssm_output
-    
-    reconstruction_loss = F.mse_loss(reconstructed_obs, target_obs, reduction='none')
-    reconstruction_loss = reconstruction_loss.sum(dim=(2, 3, 4)).mean()  # Sum over C,H,W, mean over B,T
-    reward_loss = nn.MSELoss()(predicted_rewards.squeeze(-1), target_rewards)
-    
+    obs_dist = Normal(reconstructed_obs, 1.0)
+    reconstruction_loss = -obs_dist.log_prob(target_obs).mean()
+
+    # reconstruction_loss = F.mse_loss(reconstructed_obs, target_obs, reduction='none')
+    # reconstruction_loss = reconstruction_loss.sum(dim=(2, 3, 4)).mean()  # Sum over C,H,W, mean over B,T
+    reward_dist = Normal(predicted_rewards.squeeze(-1), 1.0)
+    reward_loss = -reward_dist.log_prob(target_rewards).mean()
+
     prior_dist = Normal(prior_mus, prior_stds)
     posterior_dist = Normal(posterior_mus, posterior_stds)
     kl_per_timestep = kl_divergence(posterior_dist, prior_dist).sum(dim=-1)
