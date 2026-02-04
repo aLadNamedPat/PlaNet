@@ -490,16 +490,25 @@ def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards
     """
     prior_states, posterior_states, hiddens, prior_mus, prior_stds, \
         posterior_mus, posterior_stds, rewards = rssm_output
+    
+    # obs_dist = Normal(reconstructed_obs, 1.0)
+    # full_log_prob = obs_dist.log_prob(target_obs)
+    # reconstruction_loss = -full_log_prob.sum(dim=(2, 3, 4)).mean()
+    mse_per_pixel = (reconstructed_obs - target_obs) ** 2
+    reconstruction_loss = mse_per_pixel.sum(dim=(2, 3, 4)).mean()
 
-    obs_dist = Normal(reconstructed_obs, 1.0)
-    full_log_prob = obs_dist.log_prob(target_obs)
-    reconstruction_loss = -full_log_prob.sum(dim=(2, 3, 4)).mean()
+    # reward_dist = Normal(predicted_rewards, 1.0)
+    # if target_rewards.dim() == 2:
+    #     target_rewards = target_rewards.unsqueeze(-1)
+    # reward_loss = -reward_dist.log_prob(target_rewards).sum(dim=-1).mean()
 
-    reward_dist = Normal(predicted_rewards, 1.0)
     if target_rewards.dim() == 2:
         target_rewards = target_rewards.unsqueeze(-1)
-    reward_loss = -reward_dist.log_prob(target_rewards).sum(dim=-1).mean()
-
+    
+    reward_mse = (predicted_rewards - target_rewards) ** 2
+    # We sum over the reward dimension (usually 1) and mean over batch/time
+    reward_loss = reward_mse.sum(dim=-1).mean()
+    
     prior_dist = Normal(prior_mus, prior_stds)
     posterior_dist = Normal(posterior_mus, posterior_stds)
     

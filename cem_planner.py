@@ -111,39 +111,37 @@ class CEMPlanner:
         return self._rollout_trajectory_vectorized(action_sequences, expanded_state, expanded_hidden)
 
     def _rollout_trajectory_vectorized(self, action_sequences, initial_states, initial_hiddens):
-        """
-        Vectorized rollout for multiple trajectories simultaneously
-        
-        Uses the same dynamics as RSSM.pass_through:
-        1. Embed (state, action) with fc_embed_state_action + ReLU
-        2. Update hidden with GRUCell
-        3. Sample next state from prior (no observations during planning)
-        """
         candidates = action_sequences.shape[0]
-        current_states = initial_states      # [candidates, latent_size]
-        current_hiddens = initial_hiddens    # [candidates, hidden_size]
+        current_states = initial_states      
+        current_hiddens = initial_hiddens    
         total_returns = torch.zeros(candidates, device=self.device)
+        
+        # Get action repeat from the controller or config
+        R = self.rssm.action_repeat if hasattr(self.rssm, 'action_repeat') else 2
 
         with torch.no_grad():
             for t in range(self.horizon):
-                actions_t = action_sequences[:, t, :]  # [candidates, action_dim]
+                # This is the "Decision Step" action
+                actions_t = action_sequences[:, t, :] 
 
-                # Step 1: Embed state-action (matches RSSM.pass_through)
-                state_action_input = torch.cat([current_states, actions_t], dim=-1)
-                embedded = F.relu(self.rssm.fc_embed_state_action(state_action_input))  # [candidates, hidden_size]
+                # The environment holds this action for R steps. 
+                # We must simulate the physics R times for this one action.
+                for _ in range(R):
+                    # 1. Update Deterministic State
+                    state_action_input = torch.cat([current_states, actions_t], dim=-1)
+                    embedded = F.relu(self.rssm.fc_embed_state_action(state_action_input))
+                    current_hiddens = self.rssm.rnn(embedded, current_hiddens)
 
-                # Step 2: Update hidden state with GRUCell (matches RSSM.pass_through)
-                current_hiddens = self.rssm.rnn(embedded, current_hiddens)  # [candidates, hidden_size]
+                    # 2. Sample Stochastic State (Prior)
+                    # Note: Stochastic sampling is usually better for CEM than deterministic=True
+                    current_states, _, _ = self.rssm.sample_prior(current_hiddens, deterministic=False)
 
-                # Step 3: Sample next state from prior (no observation available during planning)
-                current_states, _, _ = self.rssm.sample_prior(current_hiddens, deterministic=True)
-
-                # Step 4: Predict reward
-                predicted_rewards = self.rssm.reward(
-                    torch.cat([current_states, current_hiddens], dim=-1)
-                ).squeeze(-1)  # [candidates]
-
-                total_returns += predicted_rewards
+                    # 3. Accumulate Reward
+                    # Reward is collected at every physics step
+                    predicted_rewards = self.rssm.reward(
+                        torch.cat([current_states, current_hiddens], dim=-1)
+                    ).squeeze(-1)
+                    total_returns += predicted_rewards
 
         return total_returns
     
