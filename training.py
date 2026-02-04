@@ -483,37 +483,39 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
 
     return buffer
 
-def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards, free_nats=3.0, debug=False):
-    """Compute RSSM training losses with free nats"""
-    prior_states, posterior_states, hiddens, prior_mus, prior_stds, posterior_mus, posterior_stds, rewards = rssm_output
-    obs_dist = Normal(reconstructed_obs, 1.0)
-    reconstruction_loss = -obs_dist.log_prob(target_obs).mean()
+def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards, target_rewards, 
+                   free_nats=3.0, debug=False):
+    """
+    Compute RSSM training losses with summed pixel log-probs.
+    """
+    prior_states, posterior_states, hiddens, prior_mus, prior_stds, \
+        posterior_mus, posterior_stds, rewards = rssm_output
 
-    # reconstruction_loss = F.mse_loss(reconstructed_obs, target_obs, reduction='none')
-    # reconstruction_loss = reconstruction_loss.sum(dim=(2, 3, 4)).mean()  # Sum over C,H,W, mean over B,T
-    reward_dist = Normal(predicted_rewards.squeeze(-1), 1.0)
-    reward_loss = -reward_dist.log_prob(target_rewards).mean()
+    obs_dist = Normal(reconstructed_obs, 1.0)
+    full_log_prob = obs_dist.log_prob(target_obs)
+    reconstruction_loss = -full_log_prob.sum(dim=(2, 3, 4)).mean()
+
+    reward_dist = Normal(predicted_rewards, 1.0)
+    if target_rewards.dim() == 2:
+        target_rewards = target_rewards.unsqueeze(-1)
+    reward_loss = -reward_dist.log_prob(target_rewards).sum(dim=-1).mean()
 
     prior_dist = Normal(prior_mus, prior_stds)
     posterior_dist = Normal(posterior_mus, posterior_stds)
-    kl_per_timestep = kl_divergence(posterior_dist, prior_dist).sum(dim=-1)
     
+    kl_per_timestep = kl_divergence(posterior_dist, prior_dist).sum(dim=-1)
     raw_kl = kl_per_timestep.mean()
+
+    free_nats_tensor = torch.tensor(free_nats, device=kl_per_timestep.device)
+    kl_loss = torch.max(kl_per_timestep, free_nats_tensor).mean()
     
     if debug:
-        print(f"    DEBUG - RAW KL (before free nats): {raw_kl.item():.4f}")
-        print(f"    DEBUG - KL min: {kl_per_timestep.min().item():.4f}, max: {kl_per_timestep.max().item():.4f}")
-        print(f"    DEBUG - Posterior mu range: [{posterior_mus.min().item():.4f}, {posterior_mus.max().item():.4f}]")
-        print(f"    DEBUG - Prior mu range: [{prior_mus.min().item():.4f}, {prior_mus.max().item():.4f}]")
-        print(f"    DEBUG - Posterior std range: [{posterior_stds.min().item():.4f}, {posterior_stds.max().item():.4f}]")
-        print(f"    DEBUG - Prior std range: [{prior_stds.min().item():.4f}, {prior_stds.max().item():.4f}]")
-    
-    # FIXED: Only penalize KL ABOVE free_nats threshold
-    free_nats_tensor = torch.tensor(free_nats, device=kl_per_timestep.device)
-    kl_clipped = torch.clamp(kl_per_timestep - free_nats_tensor, min=0.0)
-    kl_loss = kl_clipped.mean()
-    
+        print(f"    DEBUG - Recon Loss (Summed): {reconstruction_loss.item():.2f}")
+        print(f"    DEBUG - Reward Loss: {reward_loss.item():.2f}")
+        print(f"    DEBUG - Raw KL: {raw_kl.item():.2f}")
+
     return reconstruction_loss, reward_loss, kl_loss, raw_kl
+
 
 def evaluate_controller(rssm, env, num_episodes=5, max_steps=1000):
     """
