@@ -18,6 +18,7 @@ sys.path.insert(0, '/home/grokveritas/PlaNet')
 
 from dm_control import suite
 from dm_control.suite.wrappers import pixels
+from cem_planner import PlaNetController
 
 
 def create_walker_env():
@@ -69,153 +70,11 @@ def load_rssm(checkpoint_path, device='cpu'):
     return rssm
 
 
-class PlaNetController:
-    """
-    CEM-based controller for PlaNet.
-    Optimizes action sequences using the learned world model.
-    """
-    def __init__(self, rssm, action_dim, horizon=12, num_candidates=1000, 
-                 num_elites=100, num_iterations=10, action_repeat=2, device='cpu'):
-        self.rssm = rssm
-        self.action_dim = action_dim
-        self.horizon = horizon
-        self.num_candidates = num_candidates
-        self.num_elites = num_elites
-        self.num_iterations = num_iterations
-        self.action_repeat = action_repeat
-        self.device = device
-        
-        # Current belief state
-        self.hidden = None
-        self.state = None
-        
-        # Planning statistics (for visualization)
-        self.last_plan_stats = {}
-        
-    def reset(self, initial_obs):
-        """Reset the controller with an initial observation"""
-        self.hidden = torch.zeros(1, 200, device=self.device)
-        self.state = torch.zeros(1, 30, device=self.device)
-        
-        # Encode initial observation and get posterior
-        with torch.no_grad():
-            encoded = self.rssm.encode(initial_obs.unsqueeze(0).to(self.device))
-            self.state, _, _ = self.rssm.sample_posterior(self.hidden, encoded)
-    
-    def update_state(self, action):
-        """Update internal state after taking an action (matches cem_planner.py)"""
-        with torch.no_grad():
-            action_tensor = torch.tensor(action, dtype=torch.float32).unsqueeze(0).to(self.device)
-
-            # Update hidden state
-            embedded = F.relu(self.rssm.fc_embed_state_action(
-                torch.cat([self.state, action_tensor], dim=-1)
-            ))
-            self.hidden = self.rssm.rnn(embedded, self.hidden)
-
-            # Update state belief using prior (no observation yet - will be refined in next act() call)
-            self.state, _, _ = self.rssm.sample_prior(self.hidden)
-    
-    def imagine_trajectory(self, hidden, state, action_sequence):
-        """
-        Imagine a trajectory given an action sequence.
-        
-        Args:
-            hidden: [batch, hidden_size] - starting hidden state
-            state: [batch, latent_size] - starting latent state  
-            action_sequence: [batch, horizon, action_dim] - actions to take
-            
-        Returns:
-            total_reward: [batch] - predicted total reward
-        """
-        batch_size = action_sequence.shape[0]
-        total_reward = torch.zeros(batch_size, device=self.device)
-        
-        current_hidden = hidden.expand(batch_size, -1).clone()
-        current_state = state.expand(batch_size, -1).clone()
-        
-        for t in range(self.horizon):
-            action = action_sequence[:, t, :]
-            
-            # Update hidden state
-            embedded = F.relu(self.rssm.fc_embed_state_action(
-                torch.cat([current_state, action], dim=-1)
-            ))
-            current_hidden = self.rssm.rnn(embedded, current_hidden)
-            
-            # Sample next state from prior (no observation during imagination)
-            current_state, _, _ = self.rssm.sample_prior(current_hidden)
-            
-            # Predict reward
-            reward = self.rssm.reward(torch.cat([current_state, current_hidden], dim=-1))
-            total_reward += reward.squeeze(-1)
-        
-        return total_reward
-    
-    def act(self, obs_tensor):
-        """
-        Plan and return the best action using CEM.
-
-        Args:
-            obs_tensor: Current observation tensor [C, H, W]
-
-        Returns:
-            action: numpy array [action_dim]
-            plan_info: dict with planning statistics
-        """
-        with torch.no_grad():
-            # First, encode current observation and update state belief with posterior
-            encoded = self.rssm.encode(obs_tensor.unsqueeze(0).to(self.device))
-            self.state, _, _ = self.rssm.sample_posterior(self.hidden, encoded)
-            # Initialize action distribution (mean=0, std=1)
-            mean = torch.zeros(self.horizon, self.action_dim, device=self.device)
-            std = torch.ones(self.horizon, self.action_dim, device=self.device)
-            
-            all_iteration_means = []
-            all_iteration_stds = []
-            all_rewards = []
-            
-            for iteration in range(self.num_iterations):
-                # Sample action candidates from current distribution
-                # [num_candidates, horizon, action_dim]
-                noise = torch.randn(self.num_candidates, self.horizon, self.action_dim, device=self.device)
-                action_candidates = mean.unsqueeze(0) + std.unsqueeze(0) * noise
-                action_candidates = torch.clamp(action_candidates, -1.0, 1.0)
-                
-                # Evaluate all candidates
-                rewards = self.imagine_trajectory(self.hidden, self.state, action_candidates)
-                all_rewards.append(rewards.cpu().numpy())
-                
-                # Select elite candidates
-                elite_indices = torch.topk(rewards, self.num_elites).indices
-                elite_actions = action_candidates[elite_indices]
-                
-                # Update distribution to fit elites
-                mean = elite_actions.mean(dim=0)
-                std = elite_actions.std(dim=0) + 1e-6  # Prevent collapse
-                
-                all_iteration_means.append(mean.cpu().numpy())
-                all_iteration_stds.append(std.cpu().numpy())
-            
-            # Return first action from optimized sequence
-            best_action = mean[0].cpu().numpy()
-            
-            # Store planning statistics
-            self.last_plan_stats = {
-                'iteration_means': np.array(all_iteration_means),  # [num_iter, horizon, action_dim]
-                'iteration_stds': np.array(all_iteration_stds),
-                'rewards': all_rewards,
-                'final_mean': mean.cpu().numpy(),
-                'final_std': std.cpu().numpy(),
-                'best_action': best_action
-            }
-            
-            return best_action, self.last_plan_stats
+# PlaNetController is now imported from cem_planner.py
 
 
 def run_episode_and_collect_actions(env, rssm, device='cpu', max_steps=500,
-                                     horizon=12, num_candidates=1000, 
-                                     num_elites=100, num_iterations=10):
+                                     horizon=12):
     """
     Run one episode using CEM planning and collect all actions.
     
@@ -228,12 +87,9 @@ def run_episode_and_collect_actions(env, rssm, device='cpu', max_steps=500,
     action_dim = 6
     
     controller = PlaNetController(
-        rssm, action_dim, 
+        rssm, action_dim,
         horizon=horizon,
-        num_candidates=num_candidates,
-        num_elites=num_elites,
-        num_iterations=num_iterations,
-        device=device
+        action_repeat=2  # Use correct interface from cem_planner.py
     )
     
     actions_list = []
@@ -252,19 +108,19 @@ def run_episode_and_collect_actions(env, rssm, device='cpu', max_steps=500,
     # Initialize controller
     controller.reset(obs_tensor)
     
-    print(f"Running episode with CEM planning (horizon={horizon}, candidates={num_candidates})...")
+    print(f"Running episode with CEM planning (horizon={horizon})...")
     
     for step in range(max_steps):
         if step % 50 == 0:
             print(f"  Step {step}/{max_steps}...")
         
         # Get action from CEM planner (now uses current observation)
-        action, plan_stats = controller.act(obs_tensor)
+        action = controller.act(obs_tensor)
 
         # Clip action to valid range
         action = np.clip(action, -1.0, 1.0)
         actions_list.append(action.copy())
-        plan_stats_history.append(plan_stats)
+        plan_stats_history.append({})  # No planning stats from correct controller
 
         # Step environment
         time_step = env.step(action)
@@ -740,12 +596,6 @@ def main():
                         help='Number of episodes to run')
     parser.add_argument('--horizon', type=int, default=12,
                         help='CEM planning horizon')
-    parser.add_argument('--num-candidates', type=int, default=1000,
-                        help='Number of CEM candidates')
-    parser.add_argument('--num-elites', type=int, default=100,
-                        help='Number of CEM elite candidates')
-    parser.add_argument('--num-iterations', type=int, default=10,
-                        help='Number of CEM iterations')
     parser.add_argument('--output-dir', type=str, default='.',
                         help='Output directory for visualizations')
     parser.add_argument('--video-only', action='store_true',
@@ -764,8 +614,7 @@ def main():
     print(f"Checkpoint: {args.checkpoint}")
     print(f"Device: {args.device}")
     print(f"Max steps: {args.max_steps}")
-    print(f"CEM settings: horizon={args.horizon}, candidates={args.num_candidates}, "
-          f"elites={args.num_elites}, iterations={args.num_iterations}")
+    print(f"CEM settings: horizon={args.horizon} (using cem_planner.py implementation)")
     
     # Create environment
     print("\nCreating Walker environment...")
@@ -782,10 +631,7 @@ def main():
         actions, rewards, frames, plan_stats_history = run_episode_and_collect_actions(
             env, rssm, args.device,
             max_steps=args.max_steps,
-            horizon=args.horizon,
-            num_candidates=args.num_candidates,
-            num_elites=args.num_elites,
-            num_iterations=args.num_iterations
+            horizon=args.horizon
         )
         
         print(f"Collected {len(actions)} actions, {len(frames)} frames")
