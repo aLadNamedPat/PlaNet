@@ -316,7 +316,7 @@ class DMCWrapper:
         self.env.close()
 
 class ExperienceBuffer:
-    def __init__(self, max_size=100000):
+    def __init__(self, max_size=1000000):
         """Store episodes for training"""
         self.observations = []
         self.actions = []
@@ -968,7 +968,7 @@ if __name__ == "__main__":
     # Train the model with CEM evaluation and planning
     trained_rssm = train_rssm(
         S=5, B=50, L=50,
-        num_epochs= 50000,
+        num_epochs= 100000,
         evaluate_every=500,
         evaluation_episodes=1,
         plan_every=100,  # CEM planning every 25 epochs
