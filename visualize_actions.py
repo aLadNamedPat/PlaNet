@@ -656,8 +656,8 @@ def create_video(actions, rewards, frames, output_path='walker_policy.mp4', fps=
             
             # Convert figure to image array
             fig.canvas.draw()
-            img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-            img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            img = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+            img = img.reshape(fig.canvas.get_width_height()[::-1] + (4,))[:, :, :3]  # Remove alpha channel
             video_frames.append(img)
             plt.close(fig)
         else:
