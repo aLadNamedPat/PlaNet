@@ -102,20 +102,19 @@ class PlaNetController:
             encoded = self.rssm.encode(initial_obs.unsqueeze(0).to(self.device))
             self.state, _, _ = self.rssm.sample_posterior(self.hidden, encoded)
     
-    def update_state(self, action, obs_tensor):
-        """Update internal state after taking an action and observing result"""
+    def update_state(self, action):
+        """Update internal state after taking an action (matches cem_planner.py)"""
         with torch.no_grad():
             action_tensor = torch.tensor(action, dtype=torch.float32).unsqueeze(0).to(self.device)
-            
+
             # Update hidden state
             embedded = F.relu(self.rssm.fc_embed_state_action(
                 torch.cat([self.state, action_tensor], dim=-1)
             ))
             self.hidden = self.rssm.rnn(embedded, self.hidden)
-            
-            # Get posterior from new observation
-            encoded = self.rssm.encode(obs_tensor.unsqueeze(0).to(self.device))
-            self.state, _, _ = self.rssm.sample_posterior(self.hidden, encoded)
+
+            # Update state belief using prior (no observation yet - will be refined in next act() call)
+            self.state, _, _ = self.rssm.sample_prior(self.hidden)
     
     def imagine_trajectory(self, hidden, state, action_sequence):
         """
@@ -153,15 +152,21 @@ class PlaNetController:
         
         return total_reward
     
-    def act(self, obs_tensor=None):
+    def act(self, obs_tensor):
         """
         Plan and return the best action using CEM.
-        
+
+        Args:
+            obs_tensor: Current observation tensor [C, H, W]
+
         Returns:
             action: numpy array [action_dim]
             plan_info: dict with planning statistics
         """
         with torch.no_grad():
+            # First, encode current observation and update state belief with posterior
+            encoded = self.rssm.encode(obs_tensor.unsqueeze(0).to(self.device))
+            self.state, _, _ = self.rssm.sample_posterior(self.hidden, encoded)
             # Initialize action distribution (mean=0, std=1)
             mean = torch.zeros(self.horizon, self.action_dim, device=self.device)
             std = torch.ones(self.horizon, self.action_dim, device=self.device)
@@ -253,26 +258,26 @@ def run_episode_and_collect_actions(env, rssm, device='cpu', max_steps=500,
         if step % 50 == 0:
             print(f"  Step {step}/{max_steps}...")
         
-        # Get action from CEM planner
-        action, plan_stats = controller.act()
-        
+        # Get action from CEM planner (now uses current observation)
+        action, plan_stats = controller.act(obs_tensor)
+
         # Clip action to valid range
         action = np.clip(action, -1.0, 1.0)
         actions_list.append(action.copy())
         plan_stats_history.append(plan_stats)
-        
+
         # Step environment
         time_step = env.step(action)
         reward = time_step.reward if time_step.reward is not None else 0.0
         rewards_list.append(reward)
-        
+
         # Get next observation
         obs = time_step.observation['pixels']
         obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
         frames_list.append(obs.copy())
-        
-        # Update controller state
-        controller.update_state(action, obs_tensor)
+
+        # Update controller state (now only uses action, like cem_planner)
+        controller.update_state(action)
         
         if time_step.last():
             print(f"  Episode ended at step {step+1}")
