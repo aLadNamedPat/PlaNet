@@ -109,7 +109,7 @@ def run_episode_and_collect_actions(env, rssm, device='cpu', max_steps=500,
     controller.reset(obs_tensor)
     
     print(f"Running episode with CEM planning (horizon={horizon})...")
-    
+    total_reward = 0
     for step in range(max_steps):
         if step % 50 == 0:
             print(f"  Step {step}/{max_steps}...")
@@ -126,7 +126,8 @@ def run_episode_and_collect_actions(env, rssm, device='cpu', max_steps=500,
         time_step = env.step(action)
         reward = time_step.reward if time_step.reward is not None else 0.0
         rewards_list.append(reward)
-
+        total_reward += reward
+        
         # Get next observation
         obs = time_step.observation['pixels']
         obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
@@ -463,7 +464,194 @@ def visualize_actions_with_frames(actions, rewards, frames, output_path='actions
     print(f"Saved frames+actions visualization to: {output_path}")
 
 
-def create_video(actions, rewards, frames, output_path='walker_policy.mp4', fps=30, 
+def generate_dream_video(rssm, device='cpu', dream_length=200, action_strategy='random',
+                        checkpoint_path=None, output_path='dream_episode.mp4', fps=30,
+                        seed_obs=None, use_cem=False, cem_horizon=12):
+    """
+    Generate a "dream" MP4 video where RSSM imagines/hallucinates a trajectory
+    purely from its learned world model without real environment interaction.
+
+    Args:
+        rssm: Trained RSSM model
+        device: torch device
+        dream_length: Number of timesteps to dream for
+        action_strategy: 'random', 'cem', or 'zero' for action generation
+        checkpoint_path: Path to load model from (if None, assumes already loaded)
+        output_path: Path to save the dream video
+        fps: Video frames per second
+        seed_obs: Optional seed observation tensor [3, 64, 64]. If None, creates random
+        use_cem: Whether to use CEM planning for actions (overrides action_strategy)
+        cem_horizon: Planning horizon if using CEM
+
+    Returns:
+        imagined_frames: List of imagined observation frames
+        imagined_rewards: Array of imagined rewards
+        actions_taken: Array of actions used in the dream
+    """
+    import imageio
+
+    print(f"\n{'='*60}")
+    print("GENERATING RSSM DREAM VIDEO")
+    print(f"{'='*60}")
+    print(f"Dream length: {dream_length} steps")
+    print(f"Action strategy: {action_strategy}")
+    print(f"Device: {device}")
+    print(f"Output: {output_path}")
+
+    # Load model if checkpoint provided
+    if checkpoint_path and os.path.exists(checkpoint_path):
+        print(f"Loading model from: {checkpoint_path}")
+        rssm = load_rssm(checkpoint_path, device)
+
+    rssm.eval()
+
+    # Initialize state
+    batch_size = 1
+    latent_size = rssm.prior_mu.out_features  # 30
+    hidden_size = rssm.rnn.hidden_size        # 200
+    action_dim = 6
+
+    print(f"Model dimensions: latent={latent_size}, hidden={hidden_size}, action={action_dim}")
+
+    with torch.no_grad():
+        # Initialize hidden state
+        current_hidden = torch.zeros(batch_size, hidden_size, device=device)
+
+        # Initialize stochastic state
+        if seed_obs is not None:
+            print("Using provided seed observation")
+            # Use encoder to get initial state from observation
+            seed_obs = seed_obs.to(device)
+            if seed_obs.dim() == 3:  # [3, 64, 64] -> [1, 3, 64, 64]
+                seed_obs = seed_obs.unsqueeze(0)
+            encoded_obs = rssm.encode(seed_obs)
+            current_state, _, _ = rssm.sample_posterior(current_hidden, encoded_obs, deterministic=True)
+        else:
+            print("Using random initial state")
+            # Start from a random state drawn from prior
+            current_state, _, _ = rssm.sample_prior(current_hidden, deterministic=False)
+
+        # Initialize CEM planner if requested
+        planner = None
+        if use_cem or action_strategy == 'cem':
+            from cem_planner import CEMPlanner
+            planner = CEMPlanner(rssm, action_dim, horizon=cem_horizon, device=device)
+            print(f"Using CEM planner with horizon {cem_horizon}")
+
+        # Storage for dream sequence
+        imagined_frames = []
+        imagined_rewards = []
+        actions_taken = []
+
+        print(f"Starting dream sequence...")
+
+        for t in range(dream_length):
+            if t % 50 == 0:
+                print(f"  Dream step {t}/{dream_length}...")
+
+            # 1. Decode current state to get imagined observation
+            combined_state = torch.cat([current_hidden, current_state], dim=-1)
+            imagined_obs = rssm.decode(current_hidden, current_state)  # [1, 3, 64, 64]
+
+            # Convert to numpy for storage (make sure values are in [0, 1] range)
+            imagined_frame = torch.sigmoid(imagined_obs).squeeze(0).permute(1, 2, 0).cpu().numpy()
+            imagined_frame = np.clip(imagined_frame * 255, 0, 255).astype(np.uint8)
+            imagined_frames.append(imagined_frame)
+
+            # 2. Predict reward for current state
+            reward_input = torch.cat([current_state, current_hidden], dim=-1)
+            imagined_reward = rssm.reward(reward_input).squeeze().cpu().item()
+            imagined_rewards.append(imagined_reward)
+
+            # 3. Choose action for next step
+            if use_cem or action_strategy == 'cem':
+                action = planner.plan(current_state, current_hidden)
+            elif action_strategy == 'random':
+                action = np.random.uniform(-1.0, 1.0, size=action_dim)
+            elif action_strategy == 'zero':
+                action = np.zeros(action_dim)
+            elif action_strategy == 'sine':
+                # Sinusoidal actions for more interesting movement
+                action = 0.5 * np.sin(0.1 * t + np.arange(action_dim))
+            else:
+                raise ValueError(f"Unknown action strategy: {action_strategy}")
+
+            actions_taken.append(action.copy())
+
+            # 4. Transition to next state using RSSM dynamics
+            action_tensor = torch.tensor(action, dtype=torch.float32, device=device).unsqueeze(0)
+
+            # Embed state-action
+            state_action_input = torch.cat([current_state, action_tensor], dim=-1)
+            embedded = F.relu(rssm.fc_embed_state_action(state_action_input))
+
+            # Update hidden state
+            current_hidden = rssm.rnn(embedded, current_hidden)
+
+            # Sample next stochastic state from prior (imagination step)
+            current_state, _, _ = rssm.sample_prior(current_hidden, deterministic=False)
+
+        # Convert to numpy arrays
+        imagined_rewards = np.array(imagined_rewards)
+        actions_taken = np.array(actions_taken)
+
+        print(f"Dream complete! Generated {len(imagined_frames)} frames")
+        print(f"Total imagined reward: {imagined_rewards.sum():.2f}")
+        print(f"Mean reward per step: {imagined_rewards.mean():.4f}")
+
+        # Create video frames
+        print(f"Creating dream video...")
+        video_frames = []
+
+        for t in range(len(imagined_frames)):
+            # Create figure with imagined observation and action bars
+            fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+            # Left: Imagined observation
+            axes[0].imshow(imagined_frames[t])
+            axes[0].set_title(f'RSSM Dream - Step {t}', fontsize=12)
+            axes[0].axis('off')
+
+            # Right: Current action
+            colors = plt.cm.tab10(np.linspace(0, 1, action_dim))
+            action_names = ['R.Hip', 'R.Knee', 'R.Ankle', 'L.Hip', 'L.Knee', 'L.Ankle']
+
+            current_action = actions_taken[t]
+            bars = axes[1].bar(range(action_dim), current_action, color=colors)
+            axes[1].set_ylim(-1.1, 1.1)
+            axes[1].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+            axes[1].set_xticks(range(action_dim))
+            axes[1].set_xticklabels(action_names, fontsize=9)
+            axes[1].set_ylabel('Action Value', fontsize=10)
+            axes[1].grid(True, alpha=0.3, axis='y')
+
+            # Add reward information
+            cum_reward = imagined_rewards[:t+1].sum()
+            axes[1].set_title(f'Action | Reward: {cum_reward:.1f}', fontsize=12)
+
+            plt.tight_layout()
+
+            # Convert to image array
+            fig.canvas.draw()
+            img = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+            img = img.reshape(fig.canvas.get_width_height()[::-1] + (4,))[:, :, :3]
+            video_frames.append(img)
+            plt.close(fig)
+
+            if (t + 1) % 50 == 0:
+                print(f"  Processed {t+1}/{len(imagined_frames)} frames...")
+
+        # Save video
+        print(f"Saving dream video to {output_path}...")
+        imageio.mimsave(output_path, video_frames, fps=fps)
+
+        print(f"Dream video saved! Duration: {len(video_frames)/fps:.1f} seconds")
+        print(f"Action strategy used: {action_strategy}")
+
+        return imagined_frames, imagined_rewards, actions_taken
+
+
+def create_video(actions, rewards, frames, output_path='walker_policy.mp4', fps=30,
                   show_actions=True):
     """
     Create video directly without saving intermediate frames.
@@ -604,6 +792,15 @@ def main():
                         help='Video shows only walker (no action bars)')
     parser.add_argument('--fps', type=int, default=30,
                         help='Video frames per second')
+    parser.add_argument('--dream-mode', action='store_true',
+                        help='Generate dream video instead of real environment')
+    parser.add_argument('--dream-length', type=int, default=200,
+                        help='Number of timesteps for dream sequence')
+    parser.add_argument('--action-strategy', type=str, default='random',
+                        choices=['random', 'cem', 'zero', 'sine'],
+                        help='Action strategy for dream generation')
+    parser.add_argument('--cem-horizon', type=int, default=12,
+                        help='CEM planning horizon for dream generation')
     args = parser.parse_args()
     
     os.makedirs(args.output_dir, exist_ok=True)
@@ -615,15 +812,49 @@ def main():
     print(f"Device: {args.device}")
     print(f"Max steps: {args.max_steps}")
     print(f"CEM settings: horizon={args.horizon} (using cem_planner.py implementation)")
-    
-    # Create environment
-    print("\nCreating Walker environment...")
-    env = create_walker_env()
-    
+
     # Load RSSM
     print("Loading RSSM model...")
     rssm = load_rssm(args.checkpoint, args.device)
-    
+
+    # Handle dream mode
+    if args.dream_mode:
+        print(f"\n--- DREAM MODE ---")
+        print(f"Generating dream video with {args.dream_length} steps")
+        print(f"Action strategy: {args.action_strategy}")
+
+        # Generate dream video
+        output_path = os.path.join(args.output_dir, f'dream_{args.action_strategy}_{args.dream_length}_steps.mp4')
+
+        imagined_frames, imagined_rewards, actions_taken = generate_dream_video(
+            rssm=rssm,
+            device=args.device,
+            dream_length=args.dream_length,
+            action_strategy=args.action_strategy,
+            output_path=output_path,
+            fps=args.fps,
+            use_cem=(args.action_strategy == 'cem'),
+            cem_horizon=args.cem_horizon
+        )
+
+        # Print dream statistics
+        print(f"\n--- DREAM STATISTICS ---")
+        print(f"Dream length: {len(imagined_frames)} frames")
+        print(f"Total imagined reward: {imagined_rewards.sum():.2f}")
+        print(f"Mean reward per step: {imagined_rewards.mean():.4f}")
+        print(f"Action statistics:")
+        for i, action_name in enumerate(['R.Hip', 'R.Knee', 'R.Ankle', 'L.Hip', 'L.Knee', 'L.Ankle']):
+            if i < actions_taken.shape[1]:
+                action_vals = actions_taken[:, i]
+                print(f"  {action_name}: mean={action_vals.mean():.3f}, std={action_vals.std():.3f}")
+
+        print(f"\nDream video saved to: {output_path}")
+        return  # Exit early for dream mode
+
+    # Create environment (only for non-dream mode)
+    print("\nCreating Walker environment...")
+    env = create_walker_env()
+
     # Run episodes
     for ep in range(args.num_episodes):
         print(f"\n--- Episode {ep+1}/{args.num_episodes} ---")
