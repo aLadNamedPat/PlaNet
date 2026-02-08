@@ -21,7 +21,7 @@ class RSSM(nn.Module):
 
         self.min_std_dev = min_std_dev
 
-        # lstm is usde for predicting the next hidden state as the "deterministic" component of this setup
+        # GRU is used for predicting the next hidden state as the "deterministic" component of this setup
         # input should be composed of the previous hidden state, the previous state, and the previous action
         # since the action is going to be one-hot encoded, we can assume that we are going to embed the
         # action and the previous state together using some learned function. we'll call this the sa_dim
@@ -106,16 +106,6 @@ class RSSM(nn.Module):
         # actions is composed of some number of batches, some number of timesteps, and obviously 1-hot encoded
         B, T, _ = actions.size()
 
-        # Debug input shapes (only on first call)
-        if not hasattr(self, '_debug_shapes'):
-            self._debug_shapes = True
-            print(f"    RSSM pass_through - Input shapes:")
-            print(f"      prev_stochastic_state: {prev_stochastic_state.shape}")
-            print(f"      prev_hidden: {prev_hidden.shape}")
-            print(f"      encoded_obs: {encoded_obs.shape}")
-            print(f"      actions: {actions.shape}")
-            print(f"      B={B}, T={T}")
-
         posterior_states_list = [prev_stochastic_state]
         prior_states_list = [prev_stochastic_state]
         hiddens_list = [prev_hidden]
@@ -132,7 +122,6 @@ class RSSM(nn.Module):
             # encoded state is composed of [B, T, encoded_size]
             encoded_obs_t = encoded_obs[:, t, :]
             action_t = actions[:, t, :]
-
             
             # we need to select the last timestep because that's realistically the next timestep.
             posterior_state_t = posterior_states_list[-1]

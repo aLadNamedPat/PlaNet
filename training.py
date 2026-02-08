@@ -7,7 +7,6 @@ import gymnasium as gym
 import os
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-# Initialize environment setup for DMC BEFORE any dm_control imports
 def initialize_dmc_environment():
     """Initialize DMC environment before any imports"""
     print("Pre-configuring environment for DMC...")
@@ -24,7 +23,6 @@ def initialize_dmc_environment():
     except:
         xvfb_available = False
 
-    # Set the best backend before any MuJoCo imports
     if osmesa_available:
         print("Pre-setting OSMesa backend...")
         os.environ['MUJOCO_GL'] = 'osmesa'
@@ -32,7 +30,6 @@ def initialize_dmc_environment():
         os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
     elif xvfb_available:
         print("Pre-setting Xvfb backend...")
-        # Will start Xvfb later, but set the GL mode now
         os.environ['MUJOCO_GL'] = 'glfw'
     else:
         print("Pre-setting EGL backend...")
@@ -54,9 +51,7 @@ from cem_planner import PlaNetController
 
 def check_rendering_libraries():
     """Check which rendering libraries are available"""
-    print("=== Checking Rendering Libraries ===")
 
-    # Check OSMesa
     try:
         import ctypes.util
         osmesa_lib = ctypes.util.find_library('OSMesa')
@@ -67,21 +62,17 @@ def check_rendering_libraries():
     except Exception as e:
         print(f"✗ Error checking OSMesa: {e}")
 
-    # Check MuJoCo
     try:
         import mujoco
         print(f"✓ MuJoCo version: {mujoco.__version__}")
     except Exception as e:
         print(f"✗ Error importing MuJoCo: {e}")
 
-    # Check PyOpenGL
     try:
         import OpenGL
         print(f"✓ PyOpenGL version: {OpenGL.__version__}")
     except Exception as e:
         print(f"✗ Error importing PyOpenGL: {e}")
-
-    print("=" * 50)
 
 def detect_best_rendering_backend():
     """Detect the best rendering backend for this environment"""
@@ -94,7 +85,6 @@ def detect_best_rendering_backend():
     osmesa_available = ctypes.util.find_library('OSMesa') is not None
     print(f"OSMesa library: {'✓ Available' if osmesa_available else '✗ Not found'}")
 
-    # Check for Xvfb
     try:
         subprocess.run(['which', 'Xvfb'], check=True, capture_output=True)
         xvfb_available = True
@@ -113,7 +103,6 @@ def detect_best_rendering_backend():
     else:
         print("→ Trying EGL backend (hardware rendering)")
         return 'egl'
-
 
 def setup_rendering_environment(backend):
     """Setup environment variables for the chosen backend"""
@@ -172,23 +161,17 @@ def create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width
 
         print("Loading DMC suite environment...")
         env = suite.load(domain_name=domain_name, task_name=task_name)
-
-        print("Adding pixel wrapper...")
         env = pixels.Wrapper(
             env,
             pixels_only=True,
             render_kwargs={'height': height, 'width': width, 'camera_id': camera_id}
         )
-
-        print("Testing environment reset and rendering...")
         time_step = env.reset()
         pixels_obs = time_step.observation['pixels']
-        print(f"✓ SUCCESS! Rendered observation shape: {pixels_obs.shape}")
-
         return env
 
     except Exception as e:
-        print(f"\n✗ FAILED with {backend} backend")
+        print(f"\nFAILED with {backend} backend")
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
@@ -341,9 +324,7 @@ class ExperienceBuffer:
     def get_random_sequences(self, batch_size, sequence_length):
         """Sample sequences that don't cross episode boundaries"""
         if len(self.observations) < sequence_length:
-            return None, None, None
-        
-        # Build list of valid (start_idx, end_idx) ranges for each episode
+            return None, None, None        
         valid_starts = []
         current_idx = 0
         
@@ -388,7 +369,6 @@ class ExperienceBuffer:
         self.rewards.extend(other_buffer.rewards)
         self.episode_lengths.extend(other_buffer.episode_lengths)
 
-        # Maintain size limit
         while len(self.observations) > self.max_size:
             oldest_episode_len = self.episode_lengths.pop(0)
             self.observations = self.observations[oldest_episode_len:]
@@ -400,7 +380,7 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
     buffer = ExperienceBuffer()
 
     print(f"\n{'='*60}")
-    print(f"🎯 STARTING RANDOM EPISODE COLLECTION")
+    print(f"STARTING RANDOM EPISODE COLLECTION")
     print(f"Target episodes: {num_episodes}")
     print(f"Max steps per episode: {max_steps_per_episode}")
     print(f"{'='*60}")
@@ -409,7 +389,7 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
     total_reward = 0.0
 
     for episode in range(num_episodes):
-        print(f"\n📺 Episode {episode + 1}/{num_episodes} - Starting...")
+        print(f"\n Episode {episode + 1}/{num_episodes} - Starting...")
 
         obs_sequence = []
         action_sequence = []
@@ -418,13 +398,12 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
         episode_steps = 0
 
         # Reset environment
-        print(f"  🔄 Resetting environment...")
+        print(f"  Resetting environment...")
         obs, info = env.reset()
         # Convert image from (H, W, C) to (C, H, W) and normalize to [0, 1]
         # Use .copy() to ensure contiguous array for PyTorch
         obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
         obs_sequence.append(obs_tensor)
-        print(f"  ✅ Environment reset complete. Observation shape: {obs.shape}")
 
         # Episode rollout
         for step in range(max_steps_per_episode):
@@ -450,7 +429,7 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
 
             if terminated or truncated:
                 reason = "terminated" if terminated else "truncated"
-                print(f"  🏁 Episode ended at step {episode_steps} ({reason})")
+                print(f"  Episode ended at step {episode_steps} ({reason})")
                 break
 
         # Add episode to buffer (excluding last observation for action alignment)
@@ -461,20 +440,20 @@ def collect_random_episodes(env, num_episodes, max_steps_per_episode=1000):
         avg_reward = total_reward / (episode + 1)
         avg_steps = total_steps / (episode + 1)
 
-        print(f"  ✅ Episode {episode + 1} complete!")
+        print(f"     Episode {episode + 1} complete!")
         print(f"     Steps: {episode_steps} | Reward: {episode_reward:.3f}")
         print(f"     Running averages - Steps: {avg_steps:.1f} | Reward: {avg_reward:.3f}")
 
         # Milestone updates
         if (episode + 1) % 5 == 0:
-            print(f"\n📊 PROGRESS UPDATE:")
+            print(f"\n PROGRESS UPDATE:")
             print(f"   Episodes completed: {episode + 1}/{num_episodes}")
             print(f"   Total timesteps collected: {len(buffer.observations)}")
             print(f"   Average episode length: {avg_steps:.1f} steps")
             print(f"   Average episode reward: {avg_reward:.3f}")
 
     print(f"\n{'='*60}")
-    print(f"🎉 RANDOM EPISODE COLLECTION COMPLETE!")
+    print(f"RANDOM EPISODE COLLECTION COMPLETE!")
     print(f"Total episodes: {num_episodes}")
     print(f"Total timesteps: {len(buffer.observations)}")
     print(f"Average episode length: {total_steps / num_episodes:.1f} steps")
@@ -506,7 +485,7 @@ def compute_losses(rssm_output, reconstructed_obs, target_obs, predicted_rewards
     #     target_rewards = target_rewards.unsqueeze(-1)
     
     # reward_mse = (predicted_rewards - target_rewards) ** 2
-    # # We sum over the reward dimension (usually 1) and mean over batch/time
+    # We sum over the reward dimension (usually 1) and mean over batch/time
     # reward_loss = reward_mse.sum(dim=-1).mean()
     reward_loss = -reward_dist.log_prob(target_rewards).sum(dim=-1).mean()
     prior_dist = Normal(prior_mus, prior_stds)
@@ -600,7 +579,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
     buffer = ExperienceBuffer()
 
     print(f"\n{'='*60}")
-    print(f"🤖 STARTING CEM PLANNING EPISODE COLLECTION")
+    print(f"STARTING CEM PLANNING EPISODE COLLECTION")
     print(f"Target episodes: {num_episodes}")
     print(f"Max steps per episode: {max_steps}")
     print(f"Action repeat (R): {action_repeat}")
@@ -611,7 +590,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
     total_reward = 0.0
 
     for episode in range(num_episodes):
-        print(f"\n🎯 CEM Episode {episode + 1}/{num_episodes} - Starting...")
+        print(f"\n CEM Episode {episode + 1}/{num_episodes} - Starting...")
 
         obs_sequence = []
         action_sequence = []
@@ -620,18 +599,18 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
         episode_steps = 0
 
         # Reset environment and controller
-        print(f"  🔄 Resetting environment and CEM controller...")
+        print(f"  Resetting environment and CEM controller...")
         obs, info = env.reset()
         obs_tensor = torch.tensor(obs.copy(), dtype=torch.float32).permute(2, 0, 1) / 255.0
         obs_sequence.append(obs_tensor)
 
         controller.reset(obs_tensor)
-        print(f"  ✅ Reset complete. Starting CEM-guided rollout...")
+        print(f"  Reset complete. Starting CEM-guided rollout...")
 
         for step in range(max_steps):
             # Get action from CEM planner (every R timesteps)
             if step % 10 == 0:  # More frequent progress updates every 10 steps
-                print(f"    🧠 Step {step}/{max_steps} | Planning action...")
+                print(f"   Step {step}/{max_steps} | Planning action...")
 
             # Add timing to see if CEM planning is slow
             import time
@@ -662,7 +641,7 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
 
             if terminated or truncated:
                 reason = "terminated" if terminated else "truncated"
-                print(f"  🏁 CEM episode ended at step {episode_steps} ({reason})")
+                print(f"  CEM episode ended at step {episode_steps} ({reason})")
                 break
 
         # Add episode to buffer (excluding last observation for action alignment)
@@ -673,20 +652,20 @@ def collect_cem_episodes(rssm, env, num_episodes=5, max_steps=1000, action_repea
         avg_reward = total_reward / (episode + 1)
         avg_steps = total_steps / (episode + 1)
 
-        print(f"  ✅ CEM Episode {episode + 1} complete!")
+        print(f"     CEM Episode {episode + 1} complete!")
         print(f"     Steps: {episode_steps} | Reward: {episode_reward:.3f}")
         print(f"     Running averages - Steps: {avg_steps:.1f} | Reward: {avg_reward:.3f}")
 
         # Progress update
         if (episode + 1) % 2 == 0:  # More frequent updates for CEM (every 2 episodes)
-            print(f"\n📊 CEM PROGRESS UPDATE:")
+            print(f"\n CEM PROGRESS UPDATE:")
             print(f"   CEM episodes completed: {episode + 1}/{num_episodes}")
             print(f"   Total CEM timesteps collected: {len(buffer.observations)}")
             print(f"   Average CEM episode length: {avg_steps:.1f} steps")
             print(f"   Average CEM episode reward: {avg_reward:.3f}")
 
     print(f"\n{'='*60}")
-    print(f"🎉 CEM EPISODE COLLECTION COMPLETE!")
+    print(f"CEM EPISODE COLLECTION COMPLETE!")
     print(f"Total CEM episodes: {num_episodes}")
     print(f"Total CEM timesteps: {len(buffer.observations)}")
     print(f"Average CEM episode length: {total_steps / num_episodes:.1f} steps")
@@ -705,7 +684,6 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
     L: Sequence length for training chunks
     """
 
-    # Initialize DMC walker environment with pixel observations
     print("Initializing DMC walker environment...")
     dmc_env = create_dmc_env_safe(domain_name="walker", task_name="walk", height=64, width=64, camera_id=0)
     env = DMCWrapper(dmc_env)
@@ -742,7 +720,6 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
 
     # Setup device (GPU if available, CPU otherwise)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🔧 Using device: {device}")
     if torch.cuda.is_available():
         print(f"   GPU: {torch.cuda.get_device_name(0)}")
         print(f"   CUDA Version: {torch.version.cuda}")
@@ -776,13 +753,12 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
 
     for epoch in range(num_epochs):
         if epoch % 10 == 0:
-            print(f"\n🔄 Starting epoch {epoch}/{num_epochs}...")
+            print(f"\n Starting epoch {epoch}/{num_epochs}...")
             print(f"   Current dataset size: {len(dataset.observations)} timesteps")
         # Sample batch of sequences
         obs_batch, action_batch, reward_batch = dataset.get_random_sequences(B, L)
 
         if obs_batch is None:
-            print("Not enough data for training batch, skipping...")
             continue
 
         # Move data to device
@@ -814,16 +790,12 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         encoded_dim = encoded_obs.shape[-1]
         encoded_obs = encoded_obs.view(batch_size, seq_len, encoded_dim)
 
-        encoded_obs_for_posterior = encoded_obs[:, 1:, :]      # o_1 to o_{L-1} (next observations)
-        obs_targets = obs_batch[:, 1:, :, :, :]                # Raw pixels for reconstruction loss
-        action_batch_aligned = action_batch[:, :-1, :]         # a_0 to a_{L-2}
-        reward_batch_aligned = reward_batch[:, :-1]            # r_0 to r_{L-2}
+        encoded_obs_for_posterior = encoded_obs[:, 1:, :]
+        obs_targets = obs_batch[:, 1:, :, :, :]
+        action_batch_aligned = action_batch[:, :-1, :]
+        reward_batch_aligned = reward_batch[:, :-1]
 
         effective_seq_len = seq_len - 1
-
-        # Debug encoded dimensions on first epoch
-        if epoch == 0:
-            print(f"   Encoded observation shape: [batch_size, seq_len, encoded_dim] = {encoded_obs.shape}")
 
         # Initialize states
         prev_state = torch.zeros(batch_size, latent_size, device=device)
@@ -873,7 +845,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
         })
 
         if epoch % 10 == 0:
-            print(f"📈 Epoch {epoch}: Total Loss: {total_loss.item():.4f}, "
+            print(f"Epoch {epoch}: Total Loss: {total_loss.item():.4f}, "
                   f"Reconstruction: {reconstruction_loss.item():.4f}, "
                   f"Reward: {reward_loss.item():.4f}, "
                   f"KL: {kl_loss.item():.4f}")
@@ -909,7 +881,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
                     'avg_return': avg_return,
                     'episode_returns': episode_returns
                 }, best_checkpoint_path)
-                print(f"🎯 New best model saved! Return: {avg_return:.2f}")
+                print(f"New best model saved! Return: {avg_return:.2f}")
 
             # Save periodic checkpoint
             if epoch % (evaluate_every * 2) == 0:  # Every 2nd evaluation
@@ -922,7 +894,7 @@ def train_rssm(S=5, B=32, L=50, num_epochs=100, learning_rate=1e-3,
                     'avg_return': avg_return,
                     'episode_returns': episode_returns
                 }, periodic_checkpoint_path)
-                print(f"📁 Periodic checkpoint saved: epoch_{epoch}.pth")
+                print(f"Periodic checkpoint saved: epoch_{epoch}.pth")
 
             rssm.train()  # Back to training mode
             print("=== Evaluation Complete ===\n")
