@@ -4,7 +4,7 @@ My re-implementation of the paper 'Learning Latent Dynamics for Planning from Pi
 
 ![Trained Walker Impl](visualizations/Walker_Trained.gif)
 
-![Dream steps(visualizations/Dream_steps.gif)
+![Dream steps](visualizations/Dream_steps.gif)
 
 To train the model, simply run
 
