@@ -4,12 +4,18 @@ My re-implementation of the paper 'Learning Latent Dynamics for Planning from Pi
 
 ![Trained Walker Impl](visualizations/Walker_Trained.gif)
 
-![Dream steps](visualizations/Dream_steps.gif)
+![Dream steps(visualizations/Dream_steps.gif)
 
 To train the model, simply run
 
 ```
 python training.py
+```
+
+To visualize actions using the pretrained model saved in checkpoints as 'best_model.pth', run the following command:
+
+```
+python visualize_actions.py --checkpoint best_model.pth --max-steps 1000 --output-dir ./visualizations
 ```
 
 ## Evaluation
