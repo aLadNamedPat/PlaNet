@@ -2,6 +2,7 @@
 
 My re-implementation of the paper 'Learning Latent Dynamics for Planning from Pixels'
 
+Check out my post on it [here](https://www.patzhao.com/thoughts/planet-paper-reimplementation).
 ![Trained Walker Impl](visualizations/Walker_Trained.gif)
 
 ![Dream steps](visualizations/Dream_steps.gif)
